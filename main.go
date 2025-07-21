@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -282,87 +281,87 @@ type openAIResponse struct {
 }
 
 // Updated main proxy handler with proper streaming support
-func streamingProxyHandler(w http.ResponseWriter, r *http.Request) {
-	cfg := getConfig()
-
-	if err := authenticate(cfg, r); err != nil {
-		httpError(w, http.StatusUnauthorized, err.Error())
-		logger.Error("Unauthorized request", "remote_addr", r.RemoteAddr, "error", err)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "read body: %v", err)
-		logger.Error("Failed to read request body", "error", err)
-		return
-	}
-
-	input := string(body)
-	inputTokens := countInputTokensCl100k(input)
-	input, model := selectModel(body, inputTokens, &cfg.Router)
-
-	providerName := strings.Split(model, ",")
-
-	// Find the provider based on the model name
-	var provider Provider
-	for _, p := range cfg.Providers {
-		if p.Name == providerName[0] {
-			provider = p
-			break
-		}
-	}
-
-	if provider.Name == "" {
-		slog.Error("Provider not set. You need to set <provider>,<model> in the config, can't forward request", "model", model)
-		return
-	}
-
-	// Clean cache control from request if needed
-	if isOpenRouter(provider.APIBase) {
-		_input, err := removeCacheControl([]byte(input))
-		if err != nil {
-			fmt.Println("Failed to remove cache control from OpenRouter request", err)
-		} else {
-			input = string(_input)
-		}
-	}
-
-	// Create upstream request
-	req, err := http.NewRequest(r.Method, provider.APIBase, strings.NewReader(input))
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "create request: %v", err)
-		logger.Error("Failed to create upstream request", "error", err)
-		return
-	}
-	req.Header = r.Header.Clone()
-	if provider.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
-	}
-
-	logger.Info("Proxy request", "url", provider.APIBase, "model", model, "input_tokens", inputTokens)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		httpError(w, http.StatusBadGateway, "upstream error: %v", err)
-		logger.Error("Upstream request failed", "error", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Check if this is a streaming response
-	isStreaming := isStreamingResponse(resp)
-
-	if isOpenRouter(provider.APIBase) && isStreaming {
-		// Handle OpenRouter streaming with transformation
-		handleStreamingOpenRouter(w, resp, inputTokens)
-	} else if isOpenRouter(provider.APIBase) {
-		// Handle non-streaming OpenRouter with transformation
-		handleNonStreamingOpenRouter(w, resp, inputTokens)
-	} else {
-		// Direct proxy for non-OpenRouter providers
-		handleDirectStream(w, resp, inputTokens)
-	}
-}
+// func streamingProxyHandler(w http.ResponseWriter, r *http.Request) {
+// 	cfg := getConfig()
+//
+// 	if err := authenticate(cfg, r); err != nil {
+// 		httpError(w, http.StatusUnauthorized, err.Error())
+// 		logger.Error("Unauthorized request", "remote_addr", r.RemoteAddr, "error", err)
+// 		return
+// 	}
+//
+// 	body, err := io.ReadAll(r.Body)
+// 	if err != nil {
+// 		httpError(w, http.StatusBadRequest, "read body: %v", err)
+// 		logger.Error("Failed to read request body", "error", err)
+// 		return
+// 	}
+//
+// 	input := string(body)
+// 	inputTokens := countInputTokensCl100k(input)
+// 	input, model := selectModel(body, inputTokens, &cfg.Router)
+//
+// 	providerName := strings.Split(model, ",")
+//
+// 	// Find the provider based on the model name
+// 	var provider Provider
+// 	for _, p := range cfg.Providers {
+// 		if p.Name == providerName[0] {
+// 			provider = p
+// 			break
+// 		}
+// 	}
+//
+// 	if provider.Name == "" {
+// 		slog.Error("Provider not set. You need to set <provider>,<model> in the config, can't forward request", "model", model)
+// 		return
+// 	}
+//
+// 	// Clean cache control from request if needed
+// 	if isOpenRouter(provider.APIBase) {
+// 		_input, err := removeCacheControl([]byte(input))
+// 		if err != nil {
+// 			fmt.Println("Failed to remove cache control from OpenRouter request", err)
+// 		} else {
+// 			input = string(_input)
+// 		}
+// 	}
+//
+// 	// Create upstream request
+// 	req, err := http.NewRequest(r.Method, provider.APIBase, strings.NewReader(input))
+// 	if err != nil {
+// 		httpError(w, http.StatusInternalServerError, "create request: %v", err)
+// 		logger.Error("Failed to create upstream request", "error", err)
+// 		return
+// 	}
+// 	req.Header = r.Header.Clone()
+// 	if provider.APIKey != "" {
+// 		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+// 	}
+//
+// 	logger.Info("Proxy request", "url", provider.APIBase, "model", model, "input_tokens", inputTokens)
+// 	resp, err := http.DefaultClient.Do(req)
+// 	if err != nil {
+// 		httpError(w, http.StatusBadGateway, "upstream error: %v", err)
+// 		logger.Error("Upstream request failed", "error", err)
+// 		return
+// 	}
+// 	defer resp.Body.Close()
+//
+// 	// Check if this is a streaming response
+// 	isStreaming := isStreamingResponse(resp)
+//
+// 	if isOpenRouter(provider.APIBase) && isStreaming {
+// 		// Handle OpenRouter streaming with transformation
+// 		handleStreamingOpenRouter(w, resp, inputTokens)
+// 	} else if isOpenRouter(provider.APIBase) {
+// 		// Handle non-streaming OpenRouter with transformation
+// 		handleNonStreamingOpenRouter(w, resp, inputTokens)
+// 	} else {
+// 		// Direct proxy for non-OpenRouter providers
+// 		handleDirectStream(w, resp, inputTokens)
+// 	}
+// }
 
 // -- Utils ------------------------------------------------------------------
 
