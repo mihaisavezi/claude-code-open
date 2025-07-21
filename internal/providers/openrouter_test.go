@@ -3,6 +3,9 @@ package providers
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOpenRouterProvider_Transform(t *testing.T) {
@@ -36,109 +39,80 @@ func TestOpenRouterProvider_Transform(t *testing.T) {
 	inputData, _ := json.Marshal(openRouterResponse)
 	result, err := provider.Transform(inputData)
 
-	if err != nil {
-		t.Fatalf("Transform failed: %v", err)
-	}
+	require.NoError(t, err, "transform should not fail")
 
 	var anthropicResponse map[string]interface{}
-	if err := json.Unmarshal(result, &anthropicResponse); err != nil {
-		t.Fatalf("Failed to parse result: %v", err)
-	}
+	err = json.Unmarshal(result, &anthropicResponse)
+	require.NoError(t, err, "should be able to parse result")
 
 	// Verify Anthropic format
-	if anthropicResponse["type"] != "message" {
-		t.Errorf("Expected type 'message', got %v", anthropicResponse["type"])
-	}
-
-	if anthropicResponse["role"] != "assistant" {
-		t.Errorf("Expected role 'assistant', got %v", anthropicResponse["role"])
-	}
+	assert.Equal(t, "message", anthropicResponse["type"], "should have message type")
+	assert.Equal(t, "assistant", anthropicResponse["role"], "should have assistant role")
 
 	// Check content format
 	content, ok := anthropicResponse["content"].([]interface{})
-	if !ok || len(content) == 0 {
-		t.Errorf("Expected content array, got %v", anthropicResponse["content"])
-	}
+	require.True(t, ok, "content should be an array")
+	require.NotEmpty(t, content, "content should not be empty")
 
-	firstContent := content[0].(map[string]interface{})
-	if firstContent["type"] != "text" {
-		t.Errorf("Expected content type 'text', got %v", firstContent["type"])
-	}
-
-	if firstContent["text"] != "Hello! How can I help you today?" {
-		t.Errorf("Expected specific text, got %v", firstContent["text"])
-	}
+	firstContent, ok := content[0].(map[string]interface{})
+	require.True(t, ok, "first content should be a map")
+	assert.Equal(t, "text", firstContent["type"], "content type should be text")
+	assert.Equal(t, "Hello! How can I help you today?", firstContent["text"], "text content should match")
 
 	// Check usage transformation
 	usage, ok := anthropicResponse["usage"].(map[string]interface{})
-	if !ok {
-		t.Errorf("Expected usage object, got %v", anthropicResponse["usage"])
-	}
-
-	if usage["input_tokens"] != 25 {
-		t.Errorf("Expected input_tokens 25, got %v", usage["input_tokens"])
-	}
-
-	if usage["output_tokens"] != 8 {
-		t.Errorf("Expected output_tokens 8, got %v", usage["output_tokens"])
-	}
-
-	if usage["cache_read_input_tokens"] != 10 {
-		t.Errorf("Expected cache_read_input_tokens 10, got %v", usage["cache_read_input_tokens"])
-	}
+	require.True(t, ok, "usage should be an object")
+	assert.Equal(t, float64(25), usage["input_tokens"], "input_tokens should match")
+	assert.Equal(t, float64(8), usage["output_tokens"], "output_tokens should match")
+	assert.Equal(t, float64(10), usage["cache_read_input_tokens"], "cache_read_input_tokens should match")
 }
 
-func TestOpenRouterProvider_RemoveCacheControl(t *testing.T) {
+func TestOpenRouterProvider_SupportsStreaming(t *testing.T) {
+	provider := NewOpenRouterProvider()
+	assert.True(t, provider.SupportsStreaming(), "OpenRouter should support streaming")
+}
+
+func TestOpenRouterProvider_Name(t *testing.T) {
+	provider := NewOpenRouterProvider()
+	assert.Equal(t, "openrouter", provider.Name(), "provider name should be openrouter")
+}
+
+func TestOpenRouterProvider_IsStreaming(t *testing.T) {
 	provider := NewOpenRouterProvider()
 
-	// Test request with cache_control
-	requestWithCache := map[string]interface{}{
-		"model": "anthropic/claude-3.5-sonnet",
-		"messages": []interface{}{
-			map[string]interface{}{
-				"role":    "user",
-				"content": "Hello",
-				"cache_control": map[string]interface{}{
-					"type": "ephemeral",
-				},
+	testCases := []struct {
+		name     string
+		headers  map[string][]string
+		expected bool
+	}{
+		{
+			name: "content-type event-stream",
+			headers: map[string][]string{
+				"Content-Type": {"text/event-stream"},
 			},
+			expected: true,
 		},
-		"cache_control": map[string]interface{}{
-			"type": "ephemeral",
+		{
+			name: "transfer-encoding chunked",
+			headers: map[string][]string{
+				"Transfer-Encoding": {"chunked"},
+			},
+			expected: true,
+		},
+		{
+			name: "no streaming headers",
+			headers: map[string][]string{
+				"Content-Type": {"application/json"},
+			},
+			expected: false,
 		},
 	}
 
-	inputData, _ := json.Marshal(requestWithCache)
-	result, err := provider.removeCacheControl(inputData)
-
-	if err != nil {
-		t.Fatalf("removeCacheControl failed: %v", err)
-	}
-
-	var cleanedRequest map[string]interface{}
-	if err := json.Unmarshal(result, &cleanedRequest); err != nil {
-		t.Fatalf("Failed to parse cleaned request: %v", err)
-	}
-
-	// Verify cache_control is removed from root
-	if _, exists := cleanedRequest["cache_control"]; exists {
-		t.Errorf("cache_control should be removed from root")
-	}
-
-	// Verify cache_control is removed from messages
-	messages := cleanedRequest["messages"].([]interface{})
-	firstMessage := messages[0].(map[string]interface{})
-	if _, exists := firstMessage["cache_control"]; exists {
-		t.Errorf("cache_control should be removed from messages")
-	}
-
-	// Verify other fields are preserved
-	if cleanedRequest["model"] != "anthropic/claude-3.5-sonnet" {
-		t.Errorf("Model should be preserved")
-	}
-
-	if firstMessage["content"] != "Hello" {
-		t.Errorf("Message content should be preserved")
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := provider.IsStreaming(tc.headers)
+			assert.Equal(t, tc.expected, result, "streaming detection should match expected")
+		})
 	}
 }
 
@@ -163,38 +137,37 @@ func TestOpenRouterProvider_TransformStream(t *testing.T) {
 	chunkData, _ := json.Marshal(chunk)
 	result, err := provider.TransformStream(chunkData, state)
 
-	if err != nil {
-		t.Fatalf("TransformStream failed: %v", err)
-	}
+	require.NoError(t, err, "TransformStream should not fail")
 
 	// Verify result contains SSE events
 	resultStr := string(result)
-	if !contains(resultStr, "event: message_start") {
-		t.Errorf("Expected message_start event")
-	}
-
-	if !contains(resultStr, "event: content_block_start") {
-		t.Errorf("Expected content_block_start event")
-	}
-
-	if !contains(resultStr, "event: content_block_delta") {
-		t.Errorf("Expected content_block_delta event")
-	}
-
-	if !contains(resultStr, "text_delta") {
-		t.Errorf("Expected text_delta in response")
-	}
+	assert.Contains(t, resultStr, "event: message_start", "should contain message_start event")
+	assert.Contains(t, resultStr, "event: content_block_start", "should contain content_block_start event")
+	assert.Contains(t, resultStr, "event: content_block_delta", "should contain content_block_delta event")
+	assert.Contains(t, resultStr, "text_delta", "should contain text_delta in response")
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && (s[:len(substr)] == substr || s[len(s)-len(substr):] == substr || containsMiddle(s, substr)))
-}
+func TestOpenRouterProvider_ConvertStopReason(t *testing.T) {
+	provider := NewOpenRouterProvider()
 
-func containsMiddle(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+	testCases := []struct {
+		openaiReason     string
+		anthropicReason string
+	}{
+		{"stop", "end_turn"},
+		{"length", "max_tokens"},
+		{"tool_calls", "tool_use"},
+		{"function_call", "tool_use"},
+		{"content_filter", "stop_sequence"},
+		{"null", "end_turn"},
+		{"unknown", "end_turn"}, // default case
 	}
-	return false
+
+	for _, tc := range testCases {
+		t.Run(tc.openaiReason, func(t *testing.T) {
+			result := provider.convertStopReason(tc.openaiReason)
+			require.NotNil(t, result, "result should not be nil")
+			assert.Equal(t, tc.anthropicReason, *result, "stop reason should be converted correctly")
+		})
+	}
 }

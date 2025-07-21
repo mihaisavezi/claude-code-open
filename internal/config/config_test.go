@@ -4,6 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfig_LoadAndSave(t *testing.T) {
@@ -32,50 +35,27 @@ func TestConfig_LoadAndSave(t *testing.T) {
 	}
 
 	// Save configuration
-	if err := manager.Save(cfg); err != nil {
-		t.Fatalf("Failed to save config: %v", err)
-	}
+	err := manager.Save(cfg)
+	require.NoError(t, err, "should be able to save config")
 
 	// Verify file exists
-	if !manager.Exists() {
-		t.Errorf("Config file should exist after saving")
-	}
+	assert.True(t, manager.Exists(), "config file should exist after saving")
 
 	// Load configuration
 	loadedCfg, err := manager.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
+	require.NoError(t, err, "should be able to load config")
 
 	// Verify loaded configuration
-	if loadedCfg.Host != cfg.Host {
-		t.Errorf("Expected host %s, got %s", cfg.Host, loadedCfg.Host)
-	}
-
-	if loadedCfg.Port != cfg.Port {
-		t.Errorf("Expected port %d, got %d", cfg.Port, loadedCfg.Port)
-	}
-
-	if loadedCfg.APIKey != cfg.APIKey {
-		t.Errorf("Expected API key %s, got %s", cfg.APIKey, loadedCfg.APIKey)
-	}
-
-	if len(loadedCfg.Providers) != 1 {
-		t.Errorf("Expected 1 provider, got %d", len(loadedCfg.Providers))
-	}
-
+	assert.Equal(t, cfg.Host, loadedCfg.Host, "host should match")
+	assert.Equal(t, cfg.Port, loadedCfg.Port, "port should match")
+	assert.Equal(t, cfg.APIKey, loadedCfg.APIKey, "API key should match")
+	
+	require.Len(t, loadedCfg.Providers, 1, "should have 1 provider")
+	
 	provider := loadedCfg.Providers[0]
-	if provider.Name != "openrouter" {
-		t.Errorf("Expected provider name 'openrouter', got %s", provider.Name)
-	}
-
-	if provider.APIBase != "https://openrouter.ai/api/v1/chat/completions" {
-		t.Errorf("Expected specific API base, got %s", provider.APIBase)
-	}
-
-	if loadedCfg.Router.Default != "openrouter,anthropic/claude-3.5-sonnet" {
-		t.Errorf("Expected specific default router, got %s", loadedCfg.Router.Default)
-	}
+	assert.Equal(t, "openrouter", provider.Name, "provider name should match")
+	assert.Equal(t, "https://openrouter.ai/api/v1/chat/completions", provider.APIBase, "API base should match")
+	assert.Equal(t, "openrouter,anthropic/claude-3.5-sonnet", loadedCfg.Router.Default, "default router should match")
 }
 
 func TestConfig_Defaults(t *testing.T) {
@@ -98,20 +78,15 @@ func TestConfig_Defaults(t *testing.T) {
 	}
 
 	// Save and load
-	manager.Save(cfg)
+	err := manager.Save(cfg)
+	require.NoError(t, err)
+	
 	loadedCfg, err := manager.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
+	require.NoError(t, err, "should be able to load config")
 
 	// Verify defaults are applied
-	if loadedCfg.Port != DefaultPort {
-		t.Errorf("Expected default port %d, got %d", DefaultPort, loadedCfg.Port)
-	}
-
-	if loadedCfg.Host != DefaultHost {
-		t.Errorf("Expected default host %s, got %s", DefaultHost, loadedCfg.Host)
-	}
+	assert.Equal(t, DefaultPort, loadedCfg.Port, "should apply default port")
+	assert.Equal(t, DefaultHost, loadedCfg.Host, "should apply default host")
 }
 
 func TestConfig_InvalidJSON(t *testing.T) {
@@ -124,9 +99,7 @@ func TestConfig_InvalidJSON(t *testing.T) {
 
 	// Try to load
 	_, err := manager.Load()
-	if err == nil {
-		t.Errorf("Expected error when loading invalid JSON")
-	}
+	assert.Error(t, err, "should get error when loading invalid JSON")
 }
 
 func TestConfig_MissingFile(t *testing.T) {
@@ -135,24 +108,19 @@ func TestConfig_MissingFile(t *testing.T) {
 
 	// Try to load non-existent file
 	_, err := manager.Load()
-	if err == nil {
-		t.Errorf("Expected error when loading non-existent file")
-	}
+	assert.Error(t, err, "should get error when loading non-existent file")
 
 	// Check exists
-	if manager.Exists() {
-		t.Errorf("Non-existent config should not exist")
-	}
+	assert.False(t, manager.Exists(), "non-existent config should not exist")
 }
 
 func TestConfig_GetWithoutLoad(t *testing.T) {
 	tmpDir := t.TempDir()
 	manager := NewManager(tmpDir)
 
-	// Get without loading should return nil or attempt to load
+	// Get without loading should return defaults
 	cfg := manager.Get()
-	// Should not panic and either return nil or a default config
-	if cfg != nil && cfg.Port != 0 && cfg.Port != DefaultPort {
-		t.Errorf("Unexpected config returned: %+v", cfg)
-	}
+	assert.NotNil(t, cfg, "should not return nil config")
+	assert.Equal(t, DefaultPort, cfg.Port, "should return default port")
+	assert.Equal(t, DefaultHost, cfg.Host, "should return default host")
 }

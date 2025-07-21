@@ -414,9 +414,18 @@ func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove 
 }
 
 func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
-	// For now, just return messages as-is since both formats are similar
-	// This can be extended to handle specific Anthropic message format differences
-	return messages
+	// Remove cache_control from individual messages as well
+	transformedMessages := make([]interface{}, len(messages))
+	for i, message := range messages {
+		if msgMap, ok := message.(map[string]interface{}); ok {
+			// Remove cache_control from this message
+			cleanedMessage := h.removeFieldsRecursively(msgMap, []string{"cache_control"})
+			transformedMessages[i] = cleanedMessage
+		} else {
+			transformedMessages[i] = message
+		}
+	}
+	return transformedMessages
 }
 
 func (h *ProxyHandler) logResponseTokens(respBody []byte, statusCode int, inputTokens int) {

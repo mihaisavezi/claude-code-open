@@ -2,6 +2,9 @@ package providers
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRegistry_RegisterAndGet(t *testing.T) {
@@ -13,13 +16,8 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 
 	// Get provider
 	retrievedProvider, exists := registry.Get("openrouter")
-	if !exists {
-		t.Errorf("Provider should exist after registration")
-	}
-
-	if retrievedProvider.Name() != "openrouter" {
-		t.Errorf("Expected provider name 'openrouter', got %s", retrievedProvider.Name())
-	}
+	assert.True(t, exists, "provider should exist after registration")
+	assert.Equal(t, "openrouter", retrievedProvider.Name(), "provider name should match")
 }
 
 func TestRegistry_GetByDomain(t *testing.T) {
@@ -38,14 +36,8 @@ func TestRegistry_GetByDomain(t *testing.T) {
 
 	for _, tc := range testCases {
 		provider, err := registry.GetByDomain(tc.domain)
-		if err != nil {
-			t.Errorf("Failed to get provider for domain %s: %v", tc.domain, err)
-			continue
-		}
-
-		if provider.Name() != tc.expected {
-			t.Errorf("Expected provider %s for domain %s, got %s", tc.expected, tc.domain, provider.Name())
-		}
+		require.NoError(t, err, "should get provider for domain %s", tc.domain)
+		assert.Equal(t, tc.expected, provider.Name(), "provider name should match for domain %s", tc.domain)
 	}
 }
 
@@ -54,9 +46,7 @@ func TestRegistry_GetByDomain_InvalidURL(t *testing.T) {
 	registry.Initialize()
 
 	_, err := registry.GetByDomain("invalid-url")
-	if err == nil {
-		t.Errorf("Expected error for invalid URL")
-	}
+	assert.Error(t, err, "should get error for invalid URL")
 }
 
 func TestRegistry_GetByDomain_UnknownDomain(t *testing.T) {
@@ -64,9 +54,7 @@ func TestRegistry_GetByDomain_UnknownDomain(t *testing.T) {
 	registry.Initialize()
 
 	_, err := registry.GetByDomain("https://unknown-provider.com/api")
-	if err == nil {
-		t.Errorf("Expected error for unknown domain")
-	}
+	assert.Error(t, err, "should get error for unknown domain")
 }
 
 func TestRegistry_List(t *testing.T) {
@@ -76,20 +64,11 @@ func TestRegistry_List(t *testing.T) {
 	providers := registry.List()
 	
 	expectedProviders := []string{"openrouter", "openai", "anthropic"}
-	if len(providers) != len(expectedProviders) {
-		t.Errorf("Expected %d providers, got %d", len(expectedProviders), len(providers))
-	}
+	assert.Len(t, providers, len(expectedProviders), "should have expected number of providers")
 
 	// Check that all expected providers are present
-	providerMap := make(map[string]bool)
-	for _, provider := range providers {
-		providerMap[provider] = true
-	}
-
 	for _, expected := range expectedProviders {
-		if !providerMap[expected] {
-			t.Errorf("Expected provider %s not found in list", expected)
-		}
+		assert.Contains(t, providers, expected, "should contain expected provider %s", expected)
 	}
 }
 
@@ -97,7 +76,5 @@ func TestRegistry_GetNonExistent(t *testing.T) {
 	registry := NewRegistry()
 
 	_, exists := registry.Get("nonexistent")
-	if exists {
-		t.Errorf("Non-existent provider should not exist")
-	}
+	assert.False(t, exists, "non-existent provider should not exist")
 }

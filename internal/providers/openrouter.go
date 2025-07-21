@@ -52,15 +52,10 @@ func (p *OpenRouterProvider) IsStreaming(headers map[string][]string) bool {
 	return false
 }
 
-func (p *OpenRouterProvider) Transform(request []byte) ([]byte, error) {
-	// Remove cache_control from request for OpenRouter
-	cleaned, err := p.removeCacheControl(request)
-	if err != nil {
-		return request, nil // Use original if cleaning fails
-	}
-
-	// Transform OpenRouter response to Anthropic format
-	return p.convertToAnthropic(cleaned)
+func (p *OpenRouterProvider) Transform(response []byte) ([]byte, error) {
+	// This method transforms OpenRouter RESPONSES to Anthropic format
+	// Request transformation is handled in the proxy handler
+	return p.convertToAnthropic(response)
 }
 
 func (p *OpenRouterProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
@@ -247,42 +242,6 @@ func (p *OpenRouterProvider) convertToAnthropic(openRouterData []byte) ([]byte, 
 	return json.Marshal(anthropicResponse)
 }
 
-func (p *OpenRouterProvider) removeCacheControl(jsonData []byte) ([]byte, error) {
-	var data interface{}
-	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
-	}
-
-	cleaned := p.removeCacheControlRecursive(data)
-
-	result, err := json.Marshal(cleaned)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
-	}
-
-	return result, nil
-}
-
-func (p *OpenRouterProvider) removeCacheControlRecursive(data interface{}) interface{} {
-	switch v := data.(type) {
-	case map[string]interface{}:
-		result := make(map[string]interface{})
-		for key, value := range v {
-			if key != "cache_control" {
-				result[key] = p.removeCacheControlRecursive(value)
-			}
-		}
-		return result
-	case []interface{}:
-		result := make([]interface{}, len(v))
-		for i, item := range v {
-			result[i] = p.removeCacheControlRecursive(item)
-		}
-		return result
-	default:
-		return v
-	}
-}
 
 func (p *OpenRouterProvider) convertStopReason(openaiReason string) *string {
 	mapping := map[string]string{

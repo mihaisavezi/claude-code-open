@@ -76,7 +76,14 @@ func (m *Manager) Get() *Config {
 		return v.(*Config)
 	}
 
-	cfg, _ := m.Load()
+	cfg, err := m.Load()
+	if err != nil {
+		// Return a config with defaults if loading fails
+		return &Config{
+			Host: DefaultHost,
+			Port: DefaultPort,
+		}
+	}
 	return cfg
 }
 
