@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,20 +13,41 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"log/slog"
+
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 )
 
 const (
-	AppName               = "claude-code-router"
+	AppName               = ".claude-code-router"
 	Version               = "0.1.0"
 	PidFilename           = ".claude-code-router.pid"
 	RefCountFilename      = "claude-code-reference-count.txt"
-	DefaultPort           = 3456
+	DefaultPort           = 6969
 	DefaultConfigFilename = "config.json"
 )
+
+var (
+	homeDir, _  = os.UserHomeDir()
+	baseDir     = filepath.Join(homeDir, ".", AppName)
+	configPath  = filepath.Join(baseDir, DefaultConfigFilename)
+	pidFilePath = filepath.Join(baseDir, PidFilename)
+	refFilePath = filepath.Join(os.TempDir(), RefCountFilename)
+)
+
+// Global logger and atomic config
+var logger *slog.Logger
+var configValue atomic.Value // *Config
+
+func init() {
+	h := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	logger = slog.New(h)
+}
 
 type Provider struct {
 	Name    string   `json:"name"`
@@ -51,86 +72,76 @@ type Config struct {
 	Router    RouterConfig `json:"Router"`
 }
 
-var (
-	homeDir, _  = os.UserHomeDir()
-	baseDir     = filepath.Join(homeDir, ".", AppName)
-	configPath  = filepath.Join(baseDir, DefaultConfigFilename)
-	pidFilePath = filepath.Join(baseDir, PidFilename)
-	refFilePath = filepath.Join(os.TempDir(), RefCountFilename)
-)
-
 func main() {
-	rootCmd := &cobra.Command{
-		Use:   "ccr",
-		Short: "Claude Code Router",
-	}
-
-	rootCmd.AddCommand(startCmd, stopCmd, statusCmd, codeCmd, versionCmd)
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	root := &cobra.Command{Use: "ccr", Short: "Claude Code Router"}
+	root.AddCommand(startCmd, stopCmd, statusCmd, codeCmd, versionCmd)
+	if err := root.Execute(); err != nil {
+		logger.Error("CLI execution failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-// start command
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start service",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runService()
+		logger.Info("Starting service")
+		cfg, err := loadConfig()
+		if err != nil {
+			logger.Error("Load config failed", "error", err)
+			return err
+		}
+		configValue.Store(cfg)
+		// watch config in background
+		go watchConfigFile()
+		return runServiceLoop()
 	},
 }
 
-// stop command
 var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop service",
 	Run: func(cmd *cobra.Command, args []string) {
+		logger.Info("Stopping service")
 		if err := stopService(); err != nil {
-			fmt.Println("Failed to stop the service:", err)
-		} else {
-			fmt.Println("Service stopped.")
+			logger.Error("Stop failed", "error", err)
+			os.Exit(1)
 		}
+		logger.Info("Service stopped")
 	},
 }
 
-// status command
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show service status",
 	Run: func(cmd *cobra.Command, args []string) {
+		logger.Info("Fetching status")
 		showStatus()
 	},
 }
 
-// code command
 var codeCmd = &cobra.Command{
 	Use:   "code [args...]",
-	Short: "Execute code command",
+	Short: "Execute code through service",
 	Run: func(cmd *cobra.Command, args []string) {
+		logger.Info("Code command", "args", args)
 		if !isServiceRunning() {
-			fmt.Println("Service not running, starting...")
-			// start in background
+			logger.Warn("Service not running, starting")
 			execCmd := exec.Command(os.Args[0], "start")
-			execCmd.Stdout = nil
-			execCmd.Stderr = nil
-			execCmd.Stdin = nil
 			execCmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 			if err := execCmd.Start(); err != nil {
-				fmt.Fprintln(os.Stderr, "Failed to start service:", err)
+				logger.Error("Failed start", "error", err)
 				os.Exit(1)
 			}
-
 			if ok := waitForService(10*time.Second, 1*time.Second); !ok {
-				fmt.Fprintln(os.Stderr, "Service startup timeout, please run 'ccr start'")
+				logger.Error("Startup timeout")
 				os.Exit(1)
 			}
 		}
-		executeCodeCommand(args)
+		executeCode(args)
 	},
 }
 
-// version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Show version info",
@@ -139,15 +150,130 @@ var versionCmd = &cobra.Command{
 	},
 }
 
-func ensureDirs() error {
-	return os.MkdirAll(baseDir, 0o755)
+func runServiceLoop() error {
+	cfg := getConfig()
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+
+	// HTTP server with graceful shutdown
+	srv := &http.Server{Addr: addr, Handler: httpMux()}
+
+	// write PID
+	if err := os.WriteFile(pidFilePath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		logger.Error("PID file write failed", "error", err)
+		return err
+	}
+	logger.Info("PID written", "pid", os.Getpid())
+
+	// start server
+	go func() {
+		logger.Info("Listening", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("Listen error", "error", err)
+		}
+	}()
+
+	// wait signal
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	<-sigs
+	logger.Info("Shutdown signal received")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("Graceful shutdown failed", "error", err)
+		return err
+	}
+	cleanupPid()
+	logger.Info("Shutdown complete")
+	return nil
+}
+
+func httpMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/", proxyHandler)
+	return mux
+}
+
+func watchConfigFile() {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Error("Watcher init failed", "error", err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(configPath); err != nil {
+		logger.Error("Watch add failed", "error", err)
+		return
+	}
+
+	for {
+		select {
+		case ev := <-watcher.Events:
+			if ev.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				logger.Info("Config change detected")
+				if cfg, err := loadConfig(); err == nil {
+					configValue.Store(cfg)
+					logger.Info("Config reloaded")
+				} else {
+					logger.Error("Reload failed", "error", err)
+				}
+			}
+		case err := <-watcher.Errors:
+			logger.Error("Watcher error", "error", err)
+		}
+	}
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
+	logger.Debug("Health check", "remote", r.RemoteAddr)
+}
+
+func proxyHandler(w http.ResponseWriter, r *http.Request) {
+	cfg := getConfig()
+	if err := apiKeyAuth(cfg, r); err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(err.Error()))
+		logger.Warn("Unauthorized", "remote", r.RemoteAddr)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		logger.Error("Read body failed", "error", err)
+		return
+	}
+	count := len(strings.Fields(string(body)))
+	model := selectModel(count, cfg)
+	url := fmt.Sprintf("%s/v1/claude?model=%s", cfg.Providers[0].APIBase, model)
+	logger.Debug("Proxying", "url", url, "tokens", count)
+
+	req, _ := http.NewRequest(r.Method, url, io.NopCloser(strings.NewReader(string(body))))
+	req.Header = r.Header.Clone()
+	if key := cfg.Providers[0].APIKey; key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	rs, err := http.DefaultClient.Do(req)
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		logger.Error("Upstream error", "error", err)
+		return
+	}
+	defer rs.Body.Close()
+	w.WriteHeader(rs.StatusCode)
+	io.Copy(w, rs.Body)
+	logger.Debug("Response forwarded", "status", rs.StatusCode)
 }
 
 func loadConfig() (*Config, error) {
-	if err := ensureDirs(); err != nil {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, err
 	}
-	data, err := ioutil.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -161,62 +287,59 @@ func loadConfig() (*Config, error) {
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
 	}
+	logger.Debug("Config loaded", "cfg", cfg)
 	return &cfg, nil
 }
 
-func runService() error {
-	cfg, err := loadConfig()
-	if err != nil {
-		return err
+func getConfig() *Config {
+	if v := configValue.Load(); v != nil {
+		return v.(*Config)
 	}
-	if isServiceRunning() {
-		fmt.Println("Service already running")
+	cfg, _ := loadConfig()
+	return cfg
+}
+
+func apiKeyAuth(cfg *Config, r *http.Request) error {
+	if r.URL.Path == "/" || r.URL.Path == "/health" {
 		return nil
 	}
-	// save pid
-	if err := ioutil.WriteFile(pidFilePath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-		return err
+	if cfg.APIKey == "" {
+		return nil
 	}
-	// cleanup on exit
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigs
-		cleanupPid()
-		os.Exit(0)
-	}()
+	head := r.Header.Get("Authorization")
+	var token string
+	if strings.HasPrefix(head, "Bearer ") {
+		token = strings.TrimPrefix(head, "Bearer ")
+	} else if head != "" {
+		token = head
+	} else if keys := r.Header["X-API-Key"]; len(keys) > 0 {
+		token = keys[0]
+	}
+	if token != cfg.APIKey {
+		return errors.New("Invalid API key")
+	}
+	return nil
+}
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if err := apiKeyAuth(cfg, r); err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			w.Write([]byte(err.Error()))
-			return
-		}
-		handleRouter(w, r, cfg)
-	})
-
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	fmt.Println("Service listening on", addr)
-	return http.ListenAndServe(addr, nil)
+func selectModel(tokenCount int, cfg *Config) string {
+	r := cfg.Router
+	if tokenCount > 60000 && r.LongContext != "" {
+		return r.LongContext
+	}
+	// additional routing omitted
+	return r.Default
 }
 
 func stopService() error {
 	if !isServiceRunning() {
 		cleanupPid()
-		return errors.New("no running service")
+		return errors.New("no service running")
 	}
-	pidData, err := ioutil.ReadFile(pidFilePath)
+	data, err := os.ReadFile(pidFilePath)
 	if err != nil {
 		return err
 	}
-	pid, err := strconv.Atoi(string(pidData))
-	if err != nil {
-		return err
-	}
+	pid, _ := strconv.Atoi(string(data))
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return err
 	}
@@ -226,40 +349,27 @@ func stopService() error {
 
 func showStatus() {
 	running := isServiceRunning()
-	pid := getPid()
-	cfg, _ := loadConfig()
-
+	pid := 0
+	if running {
+		if data, err := os.ReadFile(pidFilePath); err == nil {
+			pid, _ = strconv.Atoi(string(data))
+		}
+	}
 	fmt.Println("\n📊 Claude Code Router Status")
 	fmt.Println(strings.Repeat("=", 40))
 	if running {
-		fmt.Println("✅ Status: Running")
-		fmt.Println("🆔 PID:", pid)
-		fmt.Println("🌐 Port:", cfg.Port)
-		fmt.Printf("📡 Endpoint: http://%s:%d\n", cfg.Host, cfg.Port)
-		fmt.Println("📄 PID File:", pidFilePath)
-		fmt.Println()
-		fmt.Println("🚀 Ready!\n  ccr code    # Code with Claude")
+		fmt.Println("✅ Running, PID:", pid)
 	} else {
-		fmt.Println("❌ Status: Not Running")
-		fmt.Println("\n💡 To start: ccr start")
+		fmt.Println("❌ Not Running")
 	}
-}
-
-func getPid() int {
-	data, err := ioutil.ReadFile(pidFilePath)
-	if err != nil {
-		return 0
-	}
-	pid, _ := strconv.Atoi(string(data))
-	return pid
 }
 
 func isServiceRunning() bool {
-	dat, err := ioutil.ReadFile(pidFilePath)
+	data, err := os.ReadFile(pidFilePath)
 	if err != nil {
 		return false
 	}
-	pid, err := strconv.Atoi(string(dat))
+	pid, err := strconv.Atoi(string(data))
 	if err != nil {
 		cleanupPid()
 		return false
@@ -272,7 +382,9 @@ func isServiceRunning() bool {
 }
 
 func cleanupPid() {
-	os.Remove(pidFilePath)
+	if err := os.Remove(pidFilePath); err != nil {
+		logger.Warn("Remove PID failed", "error", err)
+	}
 }
 
 func waitForService(timeout, initialDelay time.Duration) bool {
@@ -288,122 +400,43 @@ func waitForService(timeout, initialDelay time.Duration) bool {
 	return false
 }
 
-func incrementRef() {
-	count := 0
-	if data, err := ioutil.ReadFile(refFilePath); err == nil {
-		count, _ = strconv.Atoi(string(data))
-	}
-	count++
-	ioutil.WriteFile(refFilePath, []byte(strconv.Itoa(count)), 0o644)
-}
-
-func decrementRef() {
-	count := 0
-	if data, err := ioutil.ReadFile(refFilePath); err == nil {
-		count, _ = strconv.Atoi(string(data))
-	}
-	if count > 0 {
-		count--
-	}
-	ioutil.WriteFile(refFilePath, []byte(strconv.Itoa(count)), 0o644)
-}
-
-func executeCodeCommand(args []string) {
-	cfg, _ := loadConfig()
-	env := os.Environ()
-	env = append(env, fmt.Sprintf("ANTHROPIC_BASE_URL=http://%s:%d", cfg.Host, cfg.Port))
-	env = append(env, "API_TIMEOUT_MS=600000")
-	if cfg.APIKey != "" {
-		env = append(env, fmt.Sprintf("ANTHROPIC_API_KEY=%s", cfg.APIKey))
-	}
-
+func executeCode(args []string) {
 	incrementRef()
-	exe := exec.Command("claude", args...)
-	exe.Env = env
-	exe.Stdout = os.Stdout
-	exe.Stderr = os.Stderr
-	exe.Stdin = os.Stdin
-	exe.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	error := exe.Run()
+	cmd := exec.Command("claude", args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	err := cmd.Run()
 	decrementRef()
-	// stop service if no refs
-	if count := readRefCount(); count == 0 {
+	if readRef() == 0 {
 		stopService()
 	}
-	if error != nil {
+	if err != nil {
+		logger.Error("Code exec failed", "error", err)
 		os.Exit(1)
 	}
 }
 
-func readRefCount() int {
-	if data, err := ioutil.ReadFile(refFilePath); err == nil {
-		c, _ := strconv.Atoi(string(data))
-		return c
+func incrementRef() {
+	c := readRef()
+	c++
+	os.WriteFile(refFilePath, []byte(strconv.Itoa(c)), 0o644)
+}
+
+func decrementRef() {
+	c := readRef()
+	if c > 0 {
+		c--
+	}
+	os.WriteFile(refFilePath, []byte(strconv.Itoa(c)), 0o644)
+}
+
+func readRef() int {
+	if data, err := os.ReadFile(refFilePath); err == nil {
+		if v, err := strconv.Atoi(string(data)); err == nil {
+			return v
+		}
 	}
 	return 0
-}
-
-func apiKeyAuth(cfg *Config, r *http.Request) error {
-	if r.URL.Path == "/" || r.URL.Path == "/health" {
-		return nil
-	}
-	if cfg.APIKey == "" {
-		return nil
-	}
-	var token string
-	header := r.Header.Get("Authorization")
-	if header == "" {
-		headers := r.Header["X-API-Key"]
-		if len(headers) > 0 {
-			token = headers[0]
-		}
-	} else if strings.HasPrefix(header, "Bearer ") {
-		token = strings.TrimPrefix(header, "Bearer ")
-	} else {
-		token = header
-	}
-	if token != cfg.APIKey {
-		return errors.New("Invalid API key")
-	}
-	return nil
-}
-
-func handleRouter(w http.ResponseWriter, r *http.Request, cfg *Config) {
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	// naive token count
-	tokenCount := len(strings.Fields(string(body)))
-	model := selectModel(tokenCount, cfg)
-	// proxy to provider
-	proxyURL := fmt.Sprintf("%s/v1/claude?model=%s", cfg.Providers[0].APIBase, model)
-	req, err := http.NewRequest(r.Method, proxyURL, strings.NewReader(string(body)))
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	req.Header = r.Header.Clone()
-	if cfg.Providers[0].APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.Providers[0].APIKey)
-	}
-
-	rs, err := http.DefaultClient.Do(req)
-	if err != nil {
-		w.WriteHeader(http.StatusBadGateway)
-		return
-	}
-	defer rs.Body.Close()
-	w.WriteHeader(rs.StatusCode)
-	io.Copy(w, rs.Body)
-}
-
-func selectModel(tokenCount int, cfg *Config) string {
-	rc := cfg.Router
-	if tokenCount > 60000 && rc.LongContext != "" {
-		return rc.LongContext
-	}
-	// additional logic omitted for brevity
-	return rc.Default
 }
