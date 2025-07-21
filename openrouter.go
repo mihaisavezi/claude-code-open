@@ -72,7 +72,8 @@ func handleStreamingOpenRouter(w http.ResponseWriter, resp *http.Response, input
 			jsonData := strings.TrimPrefix(line, "data: ")
 
 			// Transform OpenRouter chunk to Claude format
-			claudeChunk, err := convertOpenRouterChunkToClaude([]byte(jsonData))
+			// claudeChunk, err := convertOpenRouterChunkToClaude([]byte(jsonData))
+			claudeChunk, err := ConvertOpenAIToAnthropicStream([]byte(jsonData))
 			if err != nil {
 				logger.Error("Failed to convert OpenRouter chunk", "error", err)
 				// Send original chunk if conversion fails
@@ -299,9 +300,11 @@ func handleNonStreamingOpenRouter(w http.ResponseWriter, resp *http.Response, in
 	}
 
 	// Transform OpenRouter response to Claude format
-	transformedBody, err := convertOpenRouterToClaude(respBody)
+	// transformedBody, err := convertOpenRouterToClaude(respBody)
+	transformedBody, err := ConvertOpenAIToAnthropic(respBody)
 	if err != nil {
 		fmt.Println("Failed to transform OpenRouter body to Claude format", err)
+		fmt.Println("Body:\n", string(respBody))
 		// Continue with original response if transformation fails
 		transformedBody = respBody
 	}
