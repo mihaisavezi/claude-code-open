@@ -1,11 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -42,7 +42,7 @@ var (
 	configPath  = filepath.Join(baseDir, DefaultConfigFilename)
 	pidFilePath = filepath.Join(baseDir, pidFilename)
 	refFilePath = filepath.Join(os.TempDir(), refCountFilename)
-	configValue atomic.Value // stores Config
+	configValue atomic.Value
 )
 
 type Provider struct {
@@ -75,12 +75,15 @@ func init() {
 
 func main() {
 	root := &cobra.Command{Use: "ccr", Short: "Claude Code Router CLI"}
+	root.PersistentFlags().BoolP("log", "l", false, "enable file logging")
 	root.AddCommand(startCmd, stopCmd, statusCmd, codeCmd, versionCmd)
 	if err := root.Execute(); err != nil {
 		logger.Error("CLI execution failed", "error", err)
 		os.Exit(1)
 	}
 }
+
+// -- Commands Definition ---------------------------------------------------
 
 var startCmd = &cobra.Command{
 	Use:   "start",
@@ -115,7 +118,20 @@ var versionCmd = &cobra.Command{
 	},
 }
 
+// -- Command Runners --------------------------------------------------------
+
 func runStart(cmd *cobra.Command, _ []string) error {
+	// Enable file logging if requested
+	if logFlag, _ := cmd.Flags().GetBool("log"); logFlag {
+		enableFileLogging()
+	}
+	// Bootstrap config if missing
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		if err := promptForConfig(); err != nil {
+			return err
+		}
+	}
+
 	color.Green("Starting %s...", AppName)
 	cfg, err := loadConfig()
 	if err != nil {
@@ -131,22 +147,29 @@ func runStop(cmd *cobra.Command, _ []string) error {
 	if err := stopService(); err != nil {
 		return fmt.Errorf("stop service: %w", err)
 	}
+	// clean ref file
+	os.Remove(refFilePath)
 	color.Green("Service stopped successfully")
 	return nil
 }
 
 func runStatus(cmd *cobra.Command, _ []string) {
-	running, pid := isServiceRunning(), 0
-	if running {
-		pid = readPid()
-	}
-	color.Blue("Status for %s:\n", AppName)
-	fmt.Printf("  %-10s: %t\n", "Running", running)
-	fmt.Printf("  %-10s: %d\n", "PID", pid)
+	running, pid := isServiceRunning(), readPid()
+	cfg := getConfig()
+	color.Blue("Status for %s:", AppName)
+	fmt.Printf("  %-15s: %v\n", "Running", running)
+	fmt.Printf("  %-15s: %d\n", "PID", pid)
+	fmt.Printf("  %-15s: %s\n", "Host", cfg.Host)
+	fmt.Printf("  %-15s: %d\n", "Port", cfg.Port)
+	fmt.Printf("  %-15s: %s\n", "Endpoint", fmt.Sprintf("http://%s:%d", cfg.Host, cfg.Port))
+	fmt.Printf("  %-15s: %s\n", "PID File", pidFilePath)
+	fmt.Printf("  %-15s: %d\n", "References", readRef())
 }
 
 func runCode(cmd *cobra.Command, args []string) error {
 	cfg := getConfig()
+
+	// Ensure service is running
 	if !isServiceRunning() {
 		color.Yellow("Service not running, starting...")
 		if err := exec.Command(os.Args[0], "start").Start(); err != nil {
@@ -156,8 +179,48 @@ func runCode(cmd *cobra.Command, args []string) error {
 			return errors.New("service startup timeout")
 		}
 	}
-	return executeCode(cfg, args)
+
+	// Set up environment variables
+	env := os.Environ()
+	if cfg.APIKey != "" {
+		env = filterEnv(env, "ANTHROPIC_AUTH_TOKEN")
+		env = append(env, "ANTHROPIC_API_KEY="+cfg.APIKey)
+	} else {
+		env = append(env, "ANTHROPIC_AUTH_TOKEN=test")
+	}
+	env = append(env, "ANTHROPIC_BASE_URL=http://"+cfg.Host+":"+strconv.Itoa(cfg.Port))
+	env = append(env, "API_TIMEOUT_MS=600000")
+
+	// Spawn Claude TUI process with inherited I/O and custom environment
+	incrementRef()
+	claudeCmd := exec.Command("claude", args...)
+	claudeCmd.Env = env
+	claudeCmd.Stdin = os.Stdin
+	claudeCmd.Stdout = os.Stdout
+	claudeCmd.Stderr = os.Stderr
+
+	err := claudeCmd.Run()
+
+	// Always decrement ref and possibly stop service afterwards
+	decrementRef()
+	if readRef() == 0 {
+		stopService()
+	}
+
+	// Propagate exit code or error
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return fmt.Errorf("claude exited with code %d", exitErr.ExitCode())
+		}
+		return fmt.Errorf("execute claude command: %w", err)
+	}
+
+	fmt.Println("QUITTINGGGG")
+
+	return nil
 }
+
+// -- Service ----------------------------------------------------------------
 
 func runServiceLoop() error {
 	cfg := getConfig()
@@ -176,6 +239,7 @@ func runServiceLoop() error {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	<-sigCh
 	color.Yellow("Shutdown signal received, exiting...")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
@@ -186,10 +250,13 @@ func runServiceLoop() error {
 	return nil
 }
 
+// -- HTTP Handlers ----------------------------------------------------------
+
 func setupMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.HandleFunc("/", proxyHandler)
+	// mux.HandleFunc("/", proxyHandler)
+	mux.HandleFunc("/", streamingProxyHandler)
 	return mux
 }
 
@@ -207,112 +274,126 @@ type openAIUsage struct {
 
 type openAIResponse struct {
 	Usage *openAIUsage `json:"usage"`
-	// other fields ignored
 }
 
-func countInputTokensCl100k(text string) int {
-	tke, err := tiktoken.GetEncoding("cl100k_base")
-	if err != nil {
-		log.Printf("failed to get encoding: %v", err)
-		return 0
-	}
-	return len(tke.Encode(text, nil, nil))
-}
+// func proxyHandler(w http.ResponseWriter, r *http.Request) {
+// 	cfg := getConfig()
+// 	if err := authenticate(cfg, r); err != nil {
+// 		httpError(w, http.StatusUnauthorized, err.Error())
+// 		logger.Error("Unauthorized request", "remote_addr", r.RemoteAddr, "error", err)
+// 		return
+// 	}
+//
+// 	body, err := io.ReadAll(r.Body)
+// 	if err != nil {
+// 		httpError(w, http.StatusBadRequest, "read body: %v", err)
+// 		logger.Error("Failed to read request body", "error", err)
+// 		return
+// 	}
+//
+// 	provider := cfg.Providers[0]
+//
+// 	if isOpenRouter(provider.APIBase) {
+// 		body, err = removeCacheControl(body)
+// 		if err != nil {
+// 			fmt.Println("Failed to remove cache control from OpenRouter request", err)
+// 		}
+// 	}
+//
+// 	input := string(body)
+// 	inputTokens := countInputTokensCl100k(input)
+//
+// 	model := selectModel(inputTokens, &cfg.Router)
+// 	req, err := http.NewRequest(r.Method, provider.APIBase, strings.NewReader(input))
+// 	if err != nil {
+// 		httpError(w, http.StatusInternalServerError, "create request: %v", err)
+// 		logger.Error("Failed to create upstream request", "error", err)
+// 		return
+// 	}
+// 	req.Header = r.Header.Clone()
+// 	if provider.APIKey != "" {
+// 		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+// 	}
+//
+// 	logger.Info("Proxy request", "url", provider.APIBase, "model", model, "input_tokens", inputTokens)
+// 	resp, err := http.DefaultClient.Do(req)
+// 	if err != nil {
+// 		httpError(w, http.StatusBadGateway, "upstream error: %v", err)
+// 		logger.Error("Upstream request failed", "error", err)
+// 		return
+// 	}
+// 	defer resp.Body.Close()
+//
+// 	spew.Dump(resp.Header)
+//
+// 	var bodyReader io.Reader = resp.Body
+// 	encoding := resp.Header.Get("Content-Encoding")
+// 	switch encoding {
+// 	case "gzip":
+// 		gzipReader, err := gzip.NewReader(resp.Body)
+// 		if err != nil {
+// 			httpError(w, http.StatusBadGateway, "create gzip reader: %v", err)
+// 			logger.Error("Failed to create gzip reader", "error", err)
+// 			return
+// 		}
+// 		defer gzipReader.Close()
+// 		bodyReader = gzipReader
+// 	case "br":
+// 		brotliReader := brotli.NewReader(resp.Body)
+// 		bodyReader = brotliReader
+// 	default:
+// 		// No compression or unsupported encoding
+// 	}
+//
+// 	// Read upstream response body (decompressed if necessary)
+// 	respBody, err := io.ReadAll(bodyReader)
+// 	if err != nil {
+// 		httpError(w, http.StatusBadGateway, "read upstream response: %v", err)
+// 		logger.Error("Failed to read upstream response body", "error", err)
+// 		return
+// 	}
+//
+// 	fmt.Println(string(respBody))
+//
+// 	if isOpenRouter(provider.APIBase) {
+// 		respBody, err = convertOpenRouterToClaude(respBody)
+// 		if err != nil {
+// 			fmt.Println("Failed to transform OpenRouter body to Claude format", err)
+// 		}
+// 	}
+//
+// 	// Write response back to client
+// 	w.WriteHeader(resp.StatusCode)
+// 	w.Write(respBody)
+//
+// 	// Log the response details
+// 	logFields := []any{
+// 		"url", provider.APIBase,
+// 		"status", resp.StatusCode,
+// 		"input_tokens", inputTokens,
+// 	}
+//
+// 	// Attempt to parse token usage
+// 	var usage *openAIUsage
+// 	var parsed openAIResponse
+// 	if err := json.Unmarshal(respBody, &parsed); err == nil && parsed.Usage != nil {
+// 		usage = parsed.Usage
+// 	}
+//
+// 	if usage != nil {
+// 		logFields = append(logFields, "output_tokens", usage.CompletionTokens)
+// 	}
+//
+// 	// Log at error on non-200, info otherwise
+// 	if resp.StatusCode != http.StatusOK {
+// 		logger.Error("Upstream non-200 response", logFields...)
+// 		fmt.Println(string(respBody))
+// 	} else {
+// 		logger.Info("Upstream 200 OK", logFields...)
+// 	}
+// }
 
-func proxyHandler(w http.ResponseWriter, r *http.Request) {
-	cfg := getConfig()
-
-	if err := authenticate(cfg, r); err != nil {
-		httpError(w, http.StatusUnauthorized, err.Error())
-		logger.Error("Unauthorized request",
-			"remote_addr", r.RemoteAddr,
-			"error", err,
-		)
-		return
-	}
-
-	// Read body
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		httpError(w, http.StatusBadRequest, "read body: %v", err)
-		logger.Error("Failed to read request body", "error", err)
-		return
-	}
-	bodyStr := string(body)
-	inputTokens := countInputTokensCl100k(bodyStr)
-
-	// Prepare upstream request
-	url := cfg.Providers[0].APIBase
-	req, err := http.NewRequest(r.Method, url, strings.NewReader(bodyStr))
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "create request: %v", err)
-		logger.Error("Failed to create upstream request", "error", err)
-		return
-	}
-	req.Header = r.Header.Clone()
-	if key := cfg.Providers[0].APIKey; key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
-
-	logger.Info("Sending LLM proxy request",
-		"url", url,
-		"method", r.Method,
-		"input_tokens", inputTokens,
-		"remote_addr", r.RemoteAddr,
-		"content_length", len(bodyStr),
-	)
-
-	// Perform upstream call
-	rs, err := http.DefaultClient.Do(req)
-	if err != nil {
-		httpError(w, http.StatusBadGateway, "upstream error: %v", err)
-		logger.Error("Upstream request failed", "error", err)
-		return
-	}
-	defer rs.Body.Close()
-
-	// Read and buffer upstream response
-	respBody, err := io.ReadAll(rs.Body)
-	if err != nil {
-		httpError(w, http.StatusBadGateway, "read upstream response: %v", err)
-		logger.Error("Failed to read upstream response body", "error", err)
-		return
-	}
-
-	// Attempt to parse OpenAI-style token usage
-	var usage *openAIUsage
-	var parsedResp openAIResponse
-	if err := json.Unmarshal(respBody, &parsedResp); err == nil && parsedResp.Usage != nil {
-		usage = parsedResp.Usage
-	}
-
-	w.WriteHeader(rs.StatusCode)
-	w.Write(respBody)
-
-	logFields := []any{
-		"url", url,
-		"method", r.Method,
-		"status", rs.StatusCode,
-		"input_tokens", inputTokens,
-		"remote_addr", r.RemoteAddr,
-		"response_length", len(respBody),
-	}
-
-	if usage != nil {
-		logFields = append(logFields,
-			"output_tokens", usage.CompletionTokens,
-			"prompt_tokens_reported", usage.PromptTokens,
-			"total_tokens", usage.TotalTokens,
-		)
-	}
-
-	if rs.StatusCode != http.StatusOK {
-		logFields = append(logFields, "response_body", string(respBody))
-		logger.Error("LLM proxy returned non-200", logFields...)
-	} else {
-		logger.Info("LLM proxy completed successfully", logFields...)
-	}
-}
+// -- Utils ------------------------------------------------------------------
 
 func httpError(w http.ResponseWriter, code int, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
@@ -325,21 +406,26 @@ func loadConfig() (Config, error) {
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return Config{}, err
 	}
+
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return Config{}, err
 	}
+
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, err
 	}
+
+	// defaults
 	if cfg.Port == 0 {
 		cfg.Port = DefaultPort
 	}
+
 	if cfg.Host == "" {
 		cfg.Host = "127.0.0.1"
 	}
-	logger.Debug("config loaded", "host", cfg.Host, "port", cfg.Port)
+
 	return cfg, nil
 }
 
@@ -347,7 +433,9 @@ func getConfig() Config {
 	if v := configValue.Load(); v != nil {
 		return v.(Config)
 	}
+
 	cfg, _ := loadConfig()
+
 	return cfg
 }
 
@@ -355,23 +443,45 @@ func authenticate(cfg Config, r *http.Request) error {
 	if r.URL.Path == "/" || r.URL.Path == "/health" || cfg.APIKey == "" {
 		return nil
 	}
-	// head := r.Header.Get("Authorization")
-	// var token string
-	// if strings.HasPrefix(head, "Bearer ") {
-	// 	token = strings.TrimPrefix(head, "Bearer ")
-	// } else if h := r.Header.Get("X-API-Key"); h != "" {
-	// 	token = h
-	// }
-	// if token != cfg.APIKey {
-	// 	return errors.New("invalid API key")
-	// }
+
+	var token string
+
+	head := r.Header.Get("Authorization")
+	if strings.HasPrefix(head, "Bearer ") {
+		token = strings.TrimPrefix(head, "Bearer ")
+	} else if key := r.Header.Get("X-API-Key"); key != "" {
+		token = key
+	}
+
+	if token != cfg.APIKey {
+		return errors.New("invalid API key")
+	}
+
 	return nil
 }
 
-func selectModel(tokenCount int, r *RouterConfig) string {
-	if tokenCount > 60000 && r.LongContext != "" {
+func selectModel(tokens int, r *RouterConfig) string {
+	// longContext
+	if tokens > 60000 && r.LongContext != "" {
 		return r.LongContext
 	}
+
+	// background
+	if r.Background != "" {
+		// placeholder: implement prefix logic if needed
+		return r.Background
+	}
+
+	// think
+	if r.Think != "" {
+		return r.Think
+	}
+
+	// webSearch
+	if r.WebSearch != "" {
+		return r.WebSearch
+	}
+
 	return r.Default
 }
 
@@ -408,9 +518,7 @@ func readPid() int {
 }
 
 func cleanupPid() {
-	if err := os.Remove(pidFilePath); err != nil {
-		logger.Warn("remove pid file", "error", err)
-	}
+	os.Remove(pidFilePath)
 }
 
 func waitForService(timeout, delay time.Duration) bool {
@@ -424,6 +532,15 @@ func waitForService(timeout, delay time.Duration) bool {
 		<-ticker.C
 	}
 	return false
+}
+
+func countInputTokensCl100k(text string) int {
+	tke, err := tiktoken.GetEncoding("cl100k_base")
+	if err != nil {
+		log.Printf("failed to get encoding: %v", err)
+		return 0
+	}
+	return len(tke.Encode(text, nil, nil))
 }
 
 func executeCode(cfg Config, args []string) error {
@@ -443,11 +560,13 @@ func executeCode(cfg Config, args []string) error {
 }
 
 func incrementRef() { writeRef(readRef() + 1) }
+
 func decrementRef() {
 	if c := readRef(); c > 0 {
 		writeRef(c - 1)
 	}
 }
+
 func readRef() int {
 	if data, err := os.ReadFile(refFilePath); err == nil {
 		if c, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
@@ -456,6 +575,7 @@ func readRef() int {
 	}
 	return 0
 }
+
 func writeRef(count int) {
 	os.WriteFile(refFilePath, []byte(strconv.Itoa(count)), 0o644)
 }
@@ -492,5 +612,99 @@ func watchConfigFile() {
 			}
 			logger.Error("watcher error", "error", err)
 		}
+	}
+}
+
+// -- Helpers --------------------------------------------------------------
+
+func promptForConfig() error {
+	r := bufio.NewReader(os.Stdin)
+	fmt.Print("Provider Name: ")
+	name, _ := r.ReadString('\n')
+	fmt.Print("API Key: ")
+	apiKey, _ := r.ReadString('\n')
+	fmt.Print("API Base URL: ")
+	baseURL, _ := r.ReadString('\n')
+	fmt.Print("Default Model: ")
+	model, _ := r.ReadString('\n')
+
+	cfg := Config{
+		Host:   "127.0.0.1",
+		Port:   DefaultPort,
+		APIKey: strings.TrimSpace(apiKey),
+		Providers: []Provider{{
+			Name:    strings.TrimSpace(name),
+			APIBase: strings.TrimSpace(baseURL),
+			APIKey:  strings.TrimSpace(apiKey),
+			Models:  []string{strings.TrimSpace(model)},
+		}},
+		Router: RouterConfig{Default: strings.TrimSpace(model)},
+	}
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return err
+	}
+	b, _ := json.MarshalIndent(cfg, "", "  ")
+	return os.WriteFile(configPath, b, 0o644)
+}
+
+func enableFileLogging() {
+	// Placeholder: integrate file logging setup
+	// e.g., set slog handler to write to file
+}
+
+func filterEnv(env []string, key string) []string {
+	var filtered []string
+	for _, e := range env {
+		if !strings.HasPrefix(e, key+"=") {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
+// removeCacheControl removes all "cache_control" fields from a JSON byte slice
+func removeCacheControl(jsonData []byte) ([]byte, error) {
+	var data interface{}
+
+	// Unmarshal JSON into generic interface
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+	}
+
+	// Recursively remove cache_control fields
+	cleaned := removeCacheControlRecursive(data)
+
+	// Marshal back to JSON
+	result, err := json.Marshal(cleaned)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	return result, nil
+}
+
+// removeCacheControlRecursive recursively walks through the data structure
+// and removes any "cache_control" keys from maps
+func removeCacheControlRecursive(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		// Create a new map without cache_control
+		result := make(map[string]interface{})
+		for key, value := range v {
+			if key != "cache_control" {
+				result[key] = removeCacheControlRecursive(value)
+			}
+		}
+		return result
+	case []interface{}:
+		// Process each element in the slice
+		result := make([]interface{}, len(v))
+		for i, item := range v {
+			result[i] = removeCacheControlRecursive(item)
+		}
+		return result
+	default:
+		// Return primitive values as-is
+		return v
 	}
 }
