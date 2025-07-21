@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -31,7 +32,7 @@ const (
 	Version               = "0.1.0"
 	pidFilename           = ".claude-code-router.pid"
 	refCountFilename      = "claude-code-reference-count.txt"
-	DefaultPort           = 6969
+	DefaultPort           = 6970
 	DefaultConfigFilename = "config.json"
 )
 
@@ -144,12 +145,16 @@ func runStart(cmd *cobra.Command, _ []string) error {
 
 func runStop(cmd *cobra.Command, _ []string) error {
 	color.Yellow("Stopping %s...", AppName)
+
 	if err := stopService(); err != nil {
 		return fmt.Errorf("stop service: %w", err)
 	}
+
 	// clean ref file
 	os.Remove(refFilePath)
+
 	color.Green("Service stopped successfully")
+
 	return nil
 }
 
@@ -276,122 +281,88 @@ type openAIResponse struct {
 	Usage *openAIUsage `json:"usage"`
 }
 
-// func proxyHandler(w http.ResponseWriter, r *http.Request) {
-// 	cfg := getConfig()
-// 	if err := authenticate(cfg, r); err != nil {
-// 		httpError(w, http.StatusUnauthorized, err.Error())
-// 		logger.Error("Unauthorized request", "remote_addr", r.RemoteAddr, "error", err)
-// 		return
-// 	}
-//
-// 	body, err := io.ReadAll(r.Body)
-// 	if err != nil {
-// 		httpError(w, http.StatusBadRequest, "read body: %v", err)
-// 		logger.Error("Failed to read request body", "error", err)
-// 		return
-// 	}
-//
-// 	provider := cfg.Providers[0]
-//
-// 	if isOpenRouter(provider.APIBase) {
-// 		body, err = removeCacheControl(body)
-// 		if err != nil {
-// 			fmt.Println("Failed to remove cache control from OpenRouter request", err)
-// 		}
-// 	}
-//
-// 	input := string(body)
-// 	inputTokens := countInputTokensCl100k(input)
-//
-// 	model := selectModel(inputTokens, &cfg.Router)
-// 	req, err := http.NewRequest(r.Method, provider.APIBase, strings.NewReader(input))
-// 	if err != nil {
-// 		httpError(w, http.StatusInternalServerError, "create request: %v", err)
-// 		logger.Error("Failed to create upstream request", "error", err)
-// 		return
-// 	}
-// 	req.Header = r.Header.Clone()
-// 	if provider.APIKey != "" {
-// 		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
-// 	}
-//
-// 	logger.Info("Proxy request", "url", provider.APIBase, "model", model, "input_tokens", inputTokens)
-// 	resp, err := http.DefaultClient.Do(req)
-// 	if err != nil {
-// 		httpError(w, http.StatusBadGateway, "upstream error: %v", err)
-// 		logger.Error("Upstream request failed", "error", err)
-// 		return
-// 	}
-// 	defer resp.Body.Close()
-//
-// 	spew.Dump(resp.Header)
-//
-// 	var bodyReader io.Reader = resp.Body
-// 	encoding := resp.Header.Get("Content-Encoding")
-// 	switch encoding {
-// 	case "gzip":
-// 		gzipReader, err := gzip.NewReader(resp.Body)
-// 		if err != nil {
-// 			httpError(w, http.StatusBadGateway, "create gzip reader: %v", err)
-// 			logger.Error("Failed to create gzip reader", "error", err)
-// 			return
-// 		}
-// 		defer gzipReader.Close()
-// 		bodyReader = gzipReader
-// 	case "br":
-// 		brotliReader := brotli.NewReader(resp.Body)
-// 		bodyReader = brotliReader
-// 	default:
-// 		// No compression or unsupported encoding
-// 	}
-//
-// 	// Read upstream response body (decompressed if necessary)
-// 	respBody, err := io.ReadAll(bodyReader)
-// 	if err != nil {
-// 		httpError(w, http.StatusBadGateway, "read upstream response: %v", err)
-// 		logger.Error("Failed to read upstream response body", "error", err)
-// 		return
-// 	}
-//
-// 	fmt.Println(string(respBody))
-//
-// 	if isOpenRouter(provider.APIBase) {
-// 		respBody, err = convertOpenRouterToClaude(respBody)
-// 		if err != nil {
-// 			fmt.Println("Failed to transform OpenRouter body to Claude format", err)
-// 		}
-// 	}
-//
-// 	// Write response back to client
-// 	w.WriteHeader(resp.StatusCode)
-// 	w.Write(respBody)
-//
-// 	// Log the response details
-// 	logFields := []any{
-// 		"url", provider.APIBase,
-// 		"status", resp.StatusCode,
-// 		"input_tokens", inputTokens,
-// 	}
-//
-// 	// Attempt to parse token usage
-// 	var usage *openAIUsage
-// 	var parsed openAIResponse
-// 	if err := json.Unmarshal(respBody, &parsed); err == nil && parsed.Usage != nil {
-// 		usage = parsed.Usage
-// 	}
-//
-// 	if usage != nil {
-// 		logFields = append(logFields, "output_tokens", usage.CompletionTokens)
-// 	}
-//
-// 	// Log at error on non-200, info otherwise
-// 	if resp.StatusCode != http.StatusOK {
-// 		logger.Error("Upstream non-200 response", logFields...)
-// 		fmt.Println(string(respBody))
-// 	} else {
-// 		logger.Info("Upstream 200 OK", logFields...)
-// 	}
-// }
+// Updated main proxy handler with proper streaming support
+func streamingProxyHandler(w http.ResponseWriter, r *http.Request) {
+	cfg := getConfig()
+
+	if err := authenticate(cfg, r); err != nil {
+		httpError(w, http.StatusUnauthorized, err.Error())
+		logger.Error("Unauthorized request", "remote_addr", r.RemoteAddr, "error", err)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "read body: %v", err)
+		logger.Error("Failed to read request body", "error", err)
+		return
+	}
+
+	input := string(body)
+	inputTokens := countInputTokensCl100k(input)
+	input, model := selectModel(body, inputTokens, &cfg.Router)
+
+	providerName := strings.Split(model, ",")
+
+	// Find the provider based on the model name
+	var provider Provider
+	for _, p := range cfg.Providers {
+		if p.Name == providerName[0] {
+			provider = p
+			break
+		}
+	}
+
+	if provider.Name == "" {
+		slog.Error("Provider not set. You need to set <provider>,<model> in the config, can't forward request", "model", model)
+		return
+	}
+
+	// Clean cache control from request if needed
+	if isOpenRouter(provider.APIBase) {
+		_input, err := removeCacheControl([]byte(input))
+		if err != nil {
+			fmt.Println("Failed to remove cache control from OpenRouter request", err)
+		} else {
+			input = string(_input)
+		}
+	}
+
+	// Create upstream request
+	req, err := http.NewRequest(r.Method, provider.APIBase, strings.NewReader(input))
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "create request: %v", err)
+		logger.Error("Failed to create upstream request", "error", err)
+		return
+	}
+	req.Header = r.Header.Clone()
+	if provider.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	}
+
+	logger.Info("Proxy request", "url", provider.APIBase, "model", model, "input_tokens", inputTokens)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "upstream error: %v", err)
+		logger.Error("Upstream request failed", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check if this is a streaming response
+	isStreaming := isStreamingResponse(resp)
+
+	if isOpenRouter(provider.APIBase) && isStreaming {
+		// Handle OpenRouter streaming with transformation
+		handleStreamingOpenRouter(w, resp, inputTokens)
+	} else if isOpenRouter(provider.APIBase) {
+		// Handle non-streaming OpenRouter with transformation
+		handleNonStreamingOpenRouter(w, resp, inputTokens)
+	} else {
+		// Direct proxy for non-OpenRouter providers
+		handleDirectStream(w, resp, inputTokens)
+	}
+}
 
 // -- Utils ------------------------------------------------------------------
 
@@ -460,39 +431,70 @@ func authenticate(cfg Config, r *http.Request) error {
 	return nil
 }
 
-func selectModel(tokens int, r *RouterConfig) string {
-	// longContext
-	if tokens > 60000 && r.LongContext != "" {
-		return r.LongContext
+func selectModel(inputBody []byte, tokens int, r *RouterConfig) (string, string) {
+	var modelBody map[string]any
+
+	if err := json.Unmarshal(inputBody, &modelBody); err != nil {
+		fmt.Println("Failed to unmarshal model from input body", err)
 	}
 
-	// background
-	if r.Background != "" {
-		// placeholder: implement prefix logic if needed
-		return r.Background
+	setModel := func() string {
+		model, ok := modelBody["model"].(string)
+
+		// longContext
+		if tokens > 60000 && r.LongContext != "" {
+			return r.LongContext
+		}
+
+		// background
+		if ok && strings.HasPrefix(model, "claude-3-5-haiku") && r.Background != "" {
+			return r.Background
+		}
+
+		// think
+		if r.Think != "" {
+			return r.Think
+		}
+
+		// webSearch
+		if r.WebSearch != "" {
+			return r.WebSearch
+		}
+
+		if len(model) > 0 {
+			return model
+		}
+
+		return r.Default
 	}
 
-	// think
-	if r.Think != "" {
-		return r.Think
+	model := setModel()
+	if m := strings.Split(model, ","); len(m) > 1 {
+		modelBody["model"] = m[1]
+	} else {
+		modelBody["model"] = model
 	}
 
-	// webSearch
-	if r.WebSearch != "" {
-		return r.WebSearch
+	_inputBody, err := json.Marshal(modelBody)
+	if err != nil {
+		fmt.Println("Failed to marshal body after model update", err)
+		return string(inputBody), model
 	}
 
-	return r.Default
+	return string(_inputBody), model
 }
 
 func stopService() error {
 	if !isServiceRunning() {
-		return errors.New("service not running")
+		return nil
 	}
+
 	if err := syscall.Kill(readPid(), syscall.SIGTERM); err != nil {
 		return err
 	}
+
 	cleanupPid()
+
 	return nil
 }
 
