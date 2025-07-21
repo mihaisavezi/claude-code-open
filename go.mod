@@ -3,10 +3,8 @@ module github.com/Davincible/claude-code-router-go
 go 1.24.4
 
 require (
-	github.com/3JoB/brotli v0.0.1
 	github.com/andybalholm/brotli v1.2.0
 	github.com/fatih/color v1.18.0
-	github.com/fsnotify/fsnotify v1.9.0
 	github.com/pkoukk/tiktoken-go v0.1.7
 	github.com/spf13/cobra v1.9.1
 )
