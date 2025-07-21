@@ -97,12 +97,13 @@ func (s *Server) setupRoutes() *http.ServeMux {
 	healthHandler := handlers.NewHealthHandler(s.logger)
 
 	// Setup middleware
+	statsigBlockerMiddleware := middleware.NewStatsigBlockerMiddleware(s.logger)
 	authMiddleware := middleware.NewAuthMiddleware(s.config, s.logger)
 	loggingMiddleware := middleware.NewLoggingMiddleware(s.logger)
 
-	// Apply middleware chain
-	mux.Handle("/health", loggingMiddleware(healthHandler))
-	mux.Handle("/", loggingMiddleware(authMiddleware(proxyHandler)))
+	// Apply middleware chain (statsig blocker first to silently ignore before logging)
+	mux.Handle("/health", statsigBlockerMiddleware(loggingMiddleware(healthHandler)))
+	mux.Handle("/", statsigBlockerMiddleware(loggingMiddleware(authMiddleware(proxyHandler))))
 
 	return mux
 }
