@@ -41,70 +41,125 @@ func handleStreamingOpenRouter(w http.ResponseWriter, resp *http.Response, input
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Copy other relevant headers from upstream response
+	for name, values := range resp.Header {
+		switch strings.ToLower(name) {
+		case "anthropic-ratelimit-unified-status",
+			"anthropic-ratelimit-unified-representative-claim",
+			"anthropic-ratelimit-unified-fallback-percentage",
+			"anthropic-ratelimit-unified-reset",
+			"request-id",
+			"anthropic-organization-id":
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
+		}
+	}
+
 	w.WriteHeader(resp.StatusCode)
 
 	// Create scanner to read SSE lines
 	scanner := bufio.NewScanner(bodyReader)
 
+	// Create state once per request - critical for proper Anthropic streaming
+	state := &StreamState{}
+
+	// Track if we've seen any content for proper stream handling
+	hasProcessedContent := false
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		// Skip empty lines
+		// Skip empty lines - these are part of SSE format
 		if line == "" {
-			fmt.Fprint(w, "\n")
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
+			// Only pass through empty lines if we're in the middle of processing
+			if hasProcessedContent {
+				fmt.Fprint(w, "\n")
+				if flusher, ok := w.(http.Flusher); ok {
+					flusher.Flush()
+				}
 			}
 			continue
 		}
 
-		// Handle [DONE] message
+		// Handle [DONE] message - OpenAI's end-of-stream indicator
 		if line == "data: [DONE]" {
-			fmt.Fprint(w, "data: [DONE]\n\n")
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+			// Anthropic streams end with message_stop event, not [DONE]
+			// If we haven't sent message_stop yet, we should, but typically
+			// the last chunk with finish_reason will handle this
+			logger.Debug("Received [DONE] from OpenAI stream")
 			break
 		}
 
-		// Process data lines
+		// Process data lines containing JSON chunks
 		if strings.HasPrefix(line, "data: ") {
 			jsonData := strings.TrimPrefix(line, "data: ")
+			hasProcessedContent = true
 
-			// Transform OpenRouter chunk to Claude format
-			// claudeChunk, err := convertOpenRouterChunkToClaude([]byte(jsonData))
-			claudeChunk, err := ConvertOpenAIToAnthropicStream([]byte(jsonData))
+			// Transform OpenAI chunk to Anthropic SSE format
+			anthropicEvents, err := ConvertOpenAIToAnthropicStream([]byte(jsonData), state)
 			if err != nil {
-				logger.Error("Failed to convert OpenRouter chunk", "error", err)
-				// Send original chunk if conversion fails
-				fmt.Fprintf(w, "%s\n", line)
+				logger.Error("Failed to convert OpenRouter chunk to Anthropic format",
+					"error", err,
+					"chunk", jsonData)
+
+				// Fallback: attempt to send the original chunk in a basic format
+				// This maintains some functionality even if conversion fails
+				fmt.Fprintf(w, "data: {\"type\":\"error\",\"error\":{\"type\":\"conversion_error\",\"message\":\"%s\"}}\n\n",
+					err.Error())
 			} else {
-				fmt.Fprintf(w, "data: %s\n", string(claudeChunk))
+				// Write the complete SSE events directly
+				// anthropicEvents already contains proper "event: type\ndata: {...}\n\n" format
+				if len(anthropicEvents) > 0 {
+					fmt.Fprint(w, string(anthropicEvents))
+				}
 			}
 
-			// Send an extra newline for SSE format
-			fmt.Fprint(w, "\n")
-
-			// Flush the response to ensure real-time streaming
+			// Flush immediately for real-time streaming
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-		} else {
-			// Pass through other SSE lines (like event: or id:)
+
+		} else if strings.HasPrefix(line, "event: ") {
+			// OpenAI typically doesn't send event lines, but handle them just in case
+			// Pass through event lines as-is since they're part of SSE format
 			fmt.Fprintf(w, "%s\n", line)
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
+
+		} else if strings.HasPrefix(line, "id: ") {
+			// Handle SSE id lines if present
+			fmt.Fprintf(w, "%s\n", line)
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+
+		} else {
+			// Log unexpected line formats for debugging
+			logger.Debug("Unexpected SSE line format", "line", line)
 		}
 	}
 
+	// Check for scanner errors
 	if err := scanner.Err(); err != nil {
 		logger.Error("Error reading stream", "error", err)
+
+		// Send error event to client if possible
+		errorEvent := fmt.Sprintf("event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"stream_error\",\"message\":\"%s\"}}\n\n",
+			err.Error())
+		fmt.Fprint(w, errorEvent)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 	}
 
-	logger.Info("Completed streaming response",
+	logger.Info("Completed streaming response conversion",
 		"status", resp.StatusCode,
-		"input_tokens", inputTokens)
+		"input_tokens", inputTokens,
+		"message_id", state.MessageID,
+		"model", state.Model)
 }
 
 // convertOpenRouterChunkToClaude converts a single OpenRouter streaming chunk to Claude format

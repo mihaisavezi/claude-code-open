@@ -101,8 +101,10 @@ type AnthropicContent struct {
 }
 
 type AnthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens            int  `json:"input_tokens"`
+	OutputTokens           int  `json:"output_tokens"`
+	CacheReadInputTokens   *int `json:"cache_read_input_tokens,omitempty"`
+	CacheCreateInputTokens *int `json:"cache_create_input_tokens,omitempty"`
 }
 
 type AnthropicError struct {
@@ -167,10 +169,14 @@ func ConvertOpenAIToAnthropic(openaiData []byte) ([]byte, error) {
 
 	// Convert usage
 	if openaiResp.Usage != nil {
-		anthropicResp.Usage = &AnthropicUsage{
+		usage := &AnthropicUsage{
 			InputTokens:  openaiResp.Usage.PromptTokens,
 			OutputTokens: openaiResp.Usage.CompletionTokens,
 		}
+
+		// Handle detailed token usage if available (requires extending OpenAIUsage struct)
+		// This would need the OpenAIUsage struct to include prompt_tokens_details etc.
+		anthropicResp.Usage = usage
 	}
 
 	return json.Marshal(anthropicResp)
@@ -300,54 +306,344 @@ func mapOpenAIErrorType(openaiType string) string {
 	return "api_error" // Default fallback
 }
 
-// ConvertOpenAIToAnthropicStream handles streaming responses
-func ConvertOpenAIToAnthropicStream(openaiData []byte) ([]byte, error) {
-	var openaiResp OpenAIResponse
-	if err := json.Unmarshal(openaiData, &openaiResp); err != nil {
+// StreamState tracks the state of streaming conversion
+type StreamState struct {
+	MessageStartSent      bool
+	ContentBlockStartSent bool
+	MessageID             string
+	Model                 string
+	InitialUsage          map[string]interface{}
+}
+
+// ConvertOpenAIToAnthropicStream converts OpenAI streaming chunks to proper Anthropic SSE format
+// Returns multiple SSE events as a byte slice in the format "event: type\ndata: {...}\n\n"
+func ConvertOpenAIToAnthropicStream(openaiData []byte, state *StreamState) ([]byte, error) {
+	var rawChunk map[string]interface{}
+	if err := json.Unmarshal(openaiData, &rawChunk); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OpenAI streaming response: %w", err)
 	}
 
-	if len(openaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in OpenAI streaming response")
+	var events []byte
+
+	// Store message ID and model from first chunk
+	if id, ok := rawChunk["id"].(string); ok && state.MessageID == "" {
+		state.MessageID = id
+	}
+	if model, ok := rawChunk["model"].(string); ok && state.Model == "" {
+		state.Model = model
 	}
 
-	choice := openaiResp.Choices[0]
-	delta := choice.Delta
+	// Handle choices array
+	if choices, ok := rawChunk["choices"].([]interface{}); ok && len(choices) > 0 {
+		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
 
-	if delta == nil {
-		return nil, fmt.Errorf("no delta in streaming choice")
-	}
+			// Send message_start event if not sent yet
+			if !state.MessageStartSent {
+				messageStartEvent := createMessageStartEvent(state.MessageID, state.Model, rawChunk)
+				events = append(events, formatSSEEvent("message_start", messageStartEvent)...)
+				state.MessageStartSent = true
+			}
 
-	// Create streaming event format for Anthropic
-	event := map[string]interface{}{
-		"type": "content_block_delta",
-	}
+			// Handle delta content
+			if delta, ok := firstChoice["delta"].(map[string]interface{}); ok {
 
-	if delta.Content != nil && *delta.Content != "" {
-		event["delta"] = map[string]interface{}{
-			"type": "text_delta",
-			"text": *delta.Content,
-		}
-	}
+				// Send content_block_start if we have content and haven't sent it yet
+				if content, ok := delta["content"].(string); ok && content != "" && !state.ContentBlockStartSent {
+					contentBlockStartEvent := map[string]interface{}{
+						"type":  "content_block_start",
+						"index": 0,
+						"content_block": map[string]interface{}{
+							"type": "text",
+							"text": "",
+						},
+					}
+					events = append(events, formatSSEEvent("content_block_start", contentBlockStartEvent)...)
+					state.ContentBlockStartSent = true
+				}
 
-	if len(delta.ToolCalls) > 0 {
-		// Handle tool call deltas
-		for _, toolCall := range delta.ToolCalls {
-			event["delta"] = map[string]interface{}{
-				"type":        "tool_use_delta",
-				"tool_use_id": toolCall.ID,
-				"name":        toolCall.Function.Name,
-				"input":       toolCall.Function.Arguments,
+				// Handle text content delta
+				if content, ok := delta["content"].(string); ok && content != "" {
+					contentDeltaEvent := map[string]interface{}{
+						"type":  "content_block_delta",
+						"index": 0,
+						"delta": map[string]interface{}{
+							"type": "text_delta",
+							"text": content,
+						},
+					}
+					events = append(events, formatSSEEvent("content_block_delta", contentDeltaEvent)...)
+				}
+
+				// Handle tool calls (create tool_use content blocks)
+				if toolCalls, ok := delta["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+					for _, toolCallInterface := range toolCalls {
+						if toolCall, ok := toolCallInterface.(map[string]interface{}); ok {
+							if function, ok := toolCall["function"].(map[string]interface{}); ok {
+								// Parse arguments
+								var input map[string]interface{}
+								if args, ok := function["arguments"].(string); ok && args != "" {
+									json.Unmarshal([]byte(args), &input)
+								}
+
+								toolUseEvent := map[string]interface{}{
+									"type":  "content_block_start",
+									"index": 0,
+									"content_block": map[string]interface{}{
+										"type":  "tool_use",
+										"id":    toolCall["id"],
+										"name":  function["name"],
+										"input": input,
+									},
+								}
+								events = append(events, formatSSEEvent("content_block_start", toolUseEvent)...)
+							}
+						}
+					}
+				}
+			}
+
+			// Handle finish_reason
+			if finishReason, ok := firstChoice["finish_reason"]; ok && finishReason != nil {
+				if reason, ok := finishReason.(string); ok {
+
+					// Send content_block_stop if we had content
+					if state.ContentBlockStartSent {
+						contentStopEvent := map[string]interface{}{
+							"type":  "content_block_stop",
+							"index": 0,
+						}
+						events = append(events, formatSSEEvent("content_block_stop", contentStopEvent)...)
+					}
+
+					// Send message_delta with stop reason and final usage
+					messageDeltaEvent := map[string]interface{}{
+						"type": "message_delta",
+						"delta": map[string]interface{}{
+							"stop_reason":   convertStopReason(reason),
+							"stop_sequence": nil,
+						},
+					}
+
+					// Add final usage if present
+					if usage, ok := rawChunk["usage"].(map[string]interface{}); ok {
+						if completionTokens, ok := usage["completion_tokens"]; ok {
+							messageDeltaEvent["usage"] = map[string]interface{}{
+								"output_tokens": completionTokens,
+							}
+						}
+					}
+
+					events = append(events, formatSSEEvent("message_delta", messageDeltaEvent)...)
+
+					// Send message_stop
+					messageStopEvent := map[string]interface{}{
+						"type": "message_stop",
+					}
+					events = append(events, formatSSEEvent("message_stop", messageStopEvent)...)
+				}
 			}
 		}
 	}
 
-	if choice.FinishReason != nil {
-		event["type"] = "message_stop"
-		event["stop_reason"] = convertStopReason(*choice.FinishReason)
+	return events, nil
+}
+
+// createMessageStartEvent creates the initial message_start event
+func createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
+	// Build usage object
+	usage := map[string]interface{}{
+		"input_tokens":  0,
+		"output_tokens": 1,
 	}
 
-	return json.Marshal(event)
+	// Extract usage from first chunk if available
+	if chunkUsage, ok := firstChunk["usage"].(map[string]interface{}); ok {
+		if promptTokens, ok := chunkUsage["prompt_tokens"]; ok {
+			usage["input_tokens"] = promptTokens
+		}
+
+		// Handle detailed token information
+		if promptDetails, ok := chunkUsage["prompt_tokens_details"].(map[string]interface{}); ok {
+			if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
+				usage["cache_read_input_tokens"] = cachedTokens
+			}
+			if cacheCreationTokens, ok := promptDetails["cache_creation_tokens"]; ok {
+				usage["cache_creation_input_tokens"] = cacheCreationTokens
+			}
+		}
+
+		// Add service tier if present
+		usage["service_tier"] = "standard" // Default, could be extracted from response
+	}
+
+	return map[string]interface{}{
+		"type": "message_start",
+		"message": map[string]interface{}{
+			"id":            messageID,
+			"type":          "message",
+			"role":          "assistant",
+			"model":         model,
+			"content":       []interface{}{},
+			"stop_reason":   nil,
+			"stop_sequence": nil,
+			"usage":         usage,
+		},
+	}
+}
+
+// formatSSEEvent formats an event into SSE format
+func formatSSEEvent(eventType string, data map[string]interface{}) []byte {
+	jsonData, _ := json.Marshal(data)
+	return []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(jsonData)))
+}
+
+// ConvertOpenAIStreamToAnthropicSSE is a higher-level function that manages state
+// and converts a sequence of OpenAI streaming chunks to Anthropic SSE format
+func ConvertOpenAIStreamToAnthropicSSE(openaiChunks [][]byte) ([]byte, error) {
+	state := &StreamState{}
+	var allEvents []byte
+
+	for _, chunk := range openaiChunks {
+		events, err := ConvertOpenAIToAnthropicStream(chunk, state)
+		if err != nil {
+			return nil, err
+		}
+		allEvents = append(allEvents, events...)
+	}
+
+	return allEvents, nil
+}
+
+// ConvertOpenAIToAnthropicWithFieldPreservation converts with enhanced field preservation
+// This combines proper Anthropic format compliance with comprehensive field preservation
+func ConvertOpenAIToAnthropicWithFieldPreservation(openaiData []byte, preserveUnknownFields bool) ([]byte, error) {
+	var rawResp map[string]interface{}
+	if err := json.Unmarshal(openaiData, &rawResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal OpenAI response: %w", err)
+	}
+
+	// First do standard conversion
+	standardResult, err := ConvertOpenAIToAnthropic(openaiData)
+	if err != nil {
+		return nil, err
+	}
+
+	if !preserveUnknownFields {
+		return standardResult, nil
+	}
+
+	// Parse the standard result to enhance it
+	var anthropicResp map[string]interface{}
+	if err := json.Unmarshal(standardResult, &anthropicResp); err != nil {
+		return nil, err
+	}
+
+	// Add preserved fields with prefixes
+	for key, value := range rawResp {
+		if !isStandardOpenAIField(key) {
+			anthropicResp["openai_"+key] = value
+		}
+	}
+
+	// Enhance usage with detailed token information
+	if usage, ok := rawResp["usage"].(map[string]interface{}); ok {
+		if anthropicUsage, ok := anthropicResp["usage"].(map[string]interface{}); ok {
+			enhancedUsage := make(map[string]interface{})
+
+			// Copy existing anthropic usage
+			for k, v := range anthropicUsage {
+				enhancedUsage[k] = v
+			}
+
+			// Add detailed token information
+			if promptDetails, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
+				if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
+					enhancedUsage["cache_read_input_tokens"] = cachedTokens
+				}
+				for key, value := range promptDetails {
+					if key != "cached_tokens" {
+						enhancedUsage["prompt_"+key] = value
+					}
+				}
+			}
+
+			if completionDetails, ok := usage["completion_tokens_details"].(map[string]interface{}); ok {
+				for key, value := range completionDetails {
+					enhancedUsage["completion_"+key] = value
+				}
+			}
+
+			anthropicResp["usage"] = enhancedUsage
+		}
+	}
+
+	return json.Marshal(anthropicResp)
+}
+
+// isStandardOpenAIField checks if a field is part of the standard OpenAI response format
+func isStandardOpenAIField(field string) bool {
+	standardFields := map[string]bool{
+		"id": true, "object": true, "created": true, "model": true,
+		"choices": true, "usage": true, "system_fingerprint": true, "error": true,
+	}
+	return standardFields[field]
+}
+
+// Example usage demonstrating all conversion functions
+func ExampleUsage() {
+	// Example OpenAI response with tool calls
+	openaiResponse := []byte(`{
+		"id": "chatcmpl-123",
+		"object": "chat.completion",
+		"created": 1677652288,
+		"model": "gpt-4",
+		"choices": [{
+			"index": 0,
+			"message": {
+				"role": "assistant",
+				"content": null,
+				"tool_calls": [{
+					"id": "call_abc123",
+					"type": "function",
+					"function": {
+						"name": "get_weather",
+						"arguments": "{\"location\": \"San Francisco\"}"
+					}
+				}]
+			},
+			"finish_reason": "tool_calls"
+		}],
+		"usage": {
+			"prompt_tokens": 82,
+			"completion_tokens": 17,
+			"total_tokens": 99,
+			"prompt_tokens_details": {
+				"cached_tokens": 40
+			}
+		}
+	}`)
+
+	// Standard conversion
+	anthropicResp, err := ConvertOpenAIToAnthropic(openaiResponse)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	// Enhanced conversion with field preservation
+	enhancedResp, err := ConvertOpenAIToAnthropicWithFieldPreservation(openaiResponse, true)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+
+	fmt.Println("Standard Anthropic format:")
+	prettyStandard, _ := PrettyPrintJSON(anthropicResp)
+	fmt.Println(prettyStandard)
+
+	fmt.Println("\nEnhanced format with field preservation:")
+	prettyEnhanced, _ := PrettyPrintJSON(enhancedResp)
+	fmt.Println(prettyEnhanced)
 }
 
 // Helper function to pretty print JSON for debugging
