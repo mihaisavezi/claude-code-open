@@ -39,10 +39,21 @@ var configValidateCmd = &cobra.Command{
 	RunE:  runConfigValidate,
 }
 
+var configGenerateCmd = &cobra.Command{
+	Use:   "generate",
+	Short: "Generate example YAML configuration",
+	Long:  `Generate an example YAML configuration file with all available providers.`,
+	RunE:  runConfigGenerate,
+}
+
 func init() {
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(configGenerateCmd)
+	
+	// Add flags for generate command
+	configGenerateCmd.Flags().BoolP("force", "f", false, "Overwrite existing configuration file")
 }
 
 func runConfigInit(cmd *cobra.Command, _ []string) error {
@@ -104,7 +115,7 @@ func runConfigInit(cmd *cobra.Command, _ []string) error {
 
 func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if !cfgMgr.Exists() {
-		color.Yellow("No configuration found. Run 'ccr config init' to create one.")
+		color.Yellow("No configuration found. Run 'ccr config init' or 'ccr config generate' to create one.")
 		return nil
 	}
 
@@ -118,13 +129,29 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  %-15s: %d\n", "Port", cfg.Port)
 	fmt.Printf("  %-15s: %s\n", "API Key", maskString(cfg.APIKey))
 	fmt.Printf("  %-15s: %s\n", "Config Path", cfgMgr.GetPath())
+	
+	// Show config file type
+	configType := "JSON"
+	if cfgMgr.HasYAML() {
+		configType = "YAML"
+	}
+	fmt.Printf("  %-15s: %s\n", "Format", configType)
 
 	fmt.Println("\nProviders:")
 	for _, provider := range cfg.Providers {
 		fmt.Printf("  - Name: %s\n", provider.Name)
-		fmt.Printf("    API Base: %s\n", provider.APIBase)
+		fmt.Printf("    URL: %s\n", provider.APIBase)
 		fmt.Printf("    API Key: %s\n", maskString(provider.APIKey))
-		fmt.Printf("    Models: %v\n", provider.Models)
+		
+		if len(provider.DefaultModels) > 0 {
+			fmt.Printf("    Default Models: %v\n", provider.DefaultModels)
+		}
+		if len(provider.ModelWhitelist) > 0 {
+			fmt.Printf("    Model Whitelist: %v\n", provider.ModelWhitelist)
+		}
+		if len(provider.Models) > 0 {
+			fmt.Printf("    Models: %v\n", provider.Models)
+		}
 		fmt.Println()
 	}
 
@@ -188,6 +215,43 @@ func runConfigValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	color.Green("Configuration is valid!")
+	return nil
+}
+
+func runConfigGenerate(cmd *cobra.Command, _ []string) error {
+	force, _ := cmd.Flags().GetBool("force")
+	
+	// Check if config already exists
+	if cfgMgr.Exists() && !force {
+		configType := "JSON"
+		if cfgMgr.HasYAML() {
+			configType = "YAML"
+		}
+		
+		color.Yellow("Configuration file already exists (%s format): %s", configType, cfgMgr.GetPath())
+		color.Cyan("Use --force to overwrite, or 'ccr config show' to view current config")
+		return nil
+	}
+
+	// Generate example YAML config
+	if err := cfgMgr.CreateExampleYAML(); err != nil {
+		return fmt.Errorf("failed to create example configuration: %w", err)
+	}
+
+	color.Green("Example YAML configuration created: %s", cfgMgr.GetYAMLPath())
+	color.Cyan("\nNext steps:")
+	fmt.Println("1. Edit the configuration file to add your API keys")
+	fmt.Println("2. Customize provider settings and model whitelists as needed")
+	fmt.Println("3. Run 'ccr config validate' to check your configuration")
+	fmt.Println("4. Start the router with 'ccr start'")
+	
+	color.Yellow("\nNote: The configuration includes all 5 supported providers:")
+	fmt.Println("- OpenRouter (access to multiple models)")
+	fmt.Println("- OpenAI (GPT models)")
+	fmt.Println("- Anthropic (Claude models)")
+	fmt.Println("- Nvidia (Nemotron models)")
+	fmt.Println("- Google Gemini (Gemini models)")
+
 	return nil
 }
 

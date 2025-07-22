@@ -210,12 +210,13 @@ The StreamState tracks streaming conversion across multiple chunks:
 	}
 
 	type ContentBlockState struct {
-		Type           string // "text" or "tool_use"
-		StartSent      bool
-		StopSent       bool
-		ToolCallID     string // For tool_use blocks
-		ToolName       string // For tool_use blocks
-		Arguments      string // Accumulated arguments for tool_use blocks
+		Type          string // "text" or "tool_use"
+		StartSent     bool
+		StopSent      bool
+		ToolCallID    string // For tool_use blocks
+		ToolCallIndex int    // OpenRouter tool call index for tracking across chunks
+		ToolName      string // For tool_use blocks
+		Arguments     string // Accumulated arguments for tool_use blocks
 	}
 
 Key principles:
@@ -315,8 +316,19 @@ For streaming tool calls:
 				}
 
 				// Send input_json_delta for streaming arguments
+				// Handle both incremental and non-incremental argument updates
 				if arguments != "" && arguments != contentBlock.Arguments {
-					newPart := arguments[len(contentBlock.Arguments):]
+					var newPart string
+					
+					// Check if arguments are incremental (common case)
+					if len(arguments) > len(contentBlock.Arguments) && 
+					   strings.HasPrefix(arguments, contentBlock.Arguments) {
+						newPart = arguments[len(contentBlock.Arguments):]
+					} else {
+						// Non-incremental update - send entire new part
+						newPart = arguments
+					}
+					
 					contentBlock.Arguments = arguments
 
 					deltaEvent := map[string]interface{}{
@@ -533,5 +545,20 @@ and enhanced usage information handling with server tool use metrics.
 **Cause**: Claude uses `input_schema`, OpenAI/OpenRouter use `parameters`
 **Solution**: Proxy handler transforms `input_schema` → `parameters` automatically
 **Prevention**: Ensure tool definitions follow Claude format in client requests
+
+### Empty Tool Parameters in Streaming (OpenRouter)
+**Cause**: OpenRouter sends tool calls in multiple chunks - first chunk has ID/name, subsequent chunks have only index and arguments
+**Solution**: Track tool calls by both ID and index, handle non-incremental argument updates
+**Prevention**: Use `ToolCallIndex` field to identify tool calls across streaming chunks
+
+**OpenRouter Streaming Pattern**:
+- First chunk: `{"id":"toolu_123","index":0,"function":{"name":"LS","arguments":""}}`
+- Later chunks: `{"index":0,"function":{"arguments":"{\"path\""}}`
+- Final chunks: `{"index":0,"function":{"arguments":":\"/home\"}"}`
+
+**Implementation Notes**:
+- Arguments may not always be incremental - handle bounds checking
+- Empty tool names/IDs in subsequent chunks are normal
+- Use `ToolCallIndex` to track tool calls when ID is missing
 */
 package providers

@@ -1,0 +1,52 @@
+# Claude Code Router Configuration
+# Generate this file with: ccr config generate
+
+# Server configuration
+host: 127.0.0.1           # Host to bind to
+port: 6970                # Port to listen on
+api_key: your-proxy-key   # Optional: API key to protect the proxy
+
+# Provider configurations
+providers:
+  # OpenRouter - Access to multiple models from different providers
+  - name: openrouter
+    api_key: your-openrouter-api-key
+    # url: https://openrouter.ai/api/v1/chat/completions  # Optional: URL is set automatically
+    model_whitelist:       # Optional: restrict to specific model patterns
+      - claude             # Allow any model containing "claude"
+      - gpt-4             # Allow any model containing "gpt-4"
+    # default_models are set automatically based on provider
+
+  # OpenAI - Direct access to GPT models
+  - name: openai
+    api_key: your-openai-api-key
+    # All GPT models will be available by default
+
+  # Anthropic - Direct access to Claude models  
+  - name: anthropic
+    api_key: your-anthropic-api-key
+
+  # Nvidia - Access to Nemotron models
+  - name: nvidia
+    api_key: your-nvidia-api-key
+
+  # Google Gemini - Access to Gemini models
+  - name: gemini
+    api_key: your-gemini-api-key
+
+# Router configuration for different use cases
+router:
+  default: openrouter/anthropic/claude-3.5-sonnet           # Default model
+  think: openai/o1-preview                                   # For complex reasoning
+  background: anthropic/claude-3-haiku-20240307             # For background tasks
+  long_context: anthropic/claude-3-5-sonnet-20241022        # For long documents
+  web_search: openrouter/perplexity/llama-3.1-sonar-huge-128k-online  # For web search
+
+# Features:
+# - YAML takes precedence over JSON configuration
+# - Default URLs are set automatically for all providers
+# - Default models are populated for each provider
+# - Model whitelist allows filtering available models
+# - All 5 major LLM providers are supported
+# - Proxy can be protected with an API key
+# - Different models can be configured for different use cases

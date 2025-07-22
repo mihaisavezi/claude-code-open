@@ -7,35 +7,35 @@ import (
 	"time"
 )
 
-type OpenAIProvider struct {
+type NvidiaProvider struct {
 	name     string
 	endpoint string
 	apiKey   string
 }
 
-func NewOpenAIProvider() *OpenAIProvider {
-	return &OpenAIProvider{
-		name: "openai",
+func NewNvidiaProvider() *NvidiaProvider {
+	return &NvidiaProvider{
+		name: "nvidia",
 	}
 }
 
-func (p *OpenAIProvider) Name() string {
+func (p *NvidiaProvider) Name() string {
 	return p.name
 }
 
-func (p *OpenAIProvider) SupportsStreaming() bool {
+func (p *NvidiaProvider) SupportsStreaming() bool {
 	return true
 }
 
-func (p *OpenAIProvider) GetEndpoint() string {
+func (p *NvidiaProvider) GetEndpoint() string {
 	return p.endpoint
 }
 
-func (p *OpenAIProvider) SetAPIKey(key string) {
+func (p *NvidiaProvider) SetAPIKey(key string) {
 	p.apiKey = key
 }
 
-func (p *OpenAIProvider) IsStreaming(headers map[string][]string) bool {
+func (p *NvidiaProvider) IsStreaming(headers map[string][]string) bool {
 	if contentType, ok := headers["Content-Type"]; ok {
 		for _, ct := range contentType {
 			if ct == "text/event-stream" || strings.Contains(ct, "stream") {
@@ -53,129 +53,93 @@ func (p *OpenAIProvider) IsStreaming(headers map[string][]string) bool {
 	return false
 }
 
-func (p *OpenAIProvider) Transform(request []byte) ([]byte, error) {
-	return p.convertOpenAIToAnthropic(request)
+func (p *NvidiaProvider) Transform(request []byte) ([]byte, error) {
+	return p.convertNvidiaToAnthropic(request)
 }
 
-func (p *OpenAIProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
-	return p.convertOpenAIToAnthropicStream(chunk, state)
+func (p *NvidiaProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
+	return p.convertNvidiaToAnthropicStream(chunk, state)
 }
 
-// OpenAI format structures
-type openAIResponse struct {
+// Nvidia format structures (same as OpenAI since they use OpenAI API spec)
+type nvidiaResponse struct {
 	ID                string         `json:"id"`
 	Object            string         `json:"object"`
 	Created           int64          `json:"created"`
 	Model             string         `json:"model"`
-	Choices           []openAIChoice `json:"choices"`
-	Usage             *openAIUsage   `json:"usage,omitempty"`
+	Choices           []nvidiaChoice `json:"choices"`
+	Usage             *nvidiaUsage   `json:"usage,omitempty"`
 	SystemFingerprint *string        `json:"system_fingerprint,omitempty"`
-	Error             *openAIError   `json:"error,omitempty"`
+	Error             *nvidiaError   `json:"error,omitempty"`
 }
 
-type openAIChoice struct {
+type nvidiaChoice struct {
 	Index        int            `json:"index"`
-	Message      *openAIMessage `json:"message,omitempty"`
-	Delta        *openAIMessage `json:"delta,omitempty"`
+	Message      *nvidiaMessage `json:"message,omitempty"`
+	Delta        *nvidiaMessage `json:"delta,omitempty"`
 	Logprobs     interface{}    `json:"logprobs,omitempty"`
 	FinishReason *string        `json:"finish_reason,omitempty"`
 }
 
-type openAIMessage struct {
+type nvidiaMessage struct {
 	Role         string           `json:"role"`
 	Content      *string          `json:"content,omitempty"`
 	Name         *string          `json:"name,omitempty"`
-	ToolCalls    []openAIToolCall `json:"tool_calls,omitempty"`
+	ToolCalls    []nvidiaToolCall `json:"tool_calls,omitempty"`
 	ToolCallId   *string          `json:"tool_call_id,omitempty"`
-	FunctionCall *openAIFunction  `json:"function_call,omitempty"`
+	FunctionCall *nvidiaFunction  `json:"function_call,omitempty"`
 }
 
-type openAIToolCall struct {
+type nvidiaToolCall struct {
 	ID       string         `json:"id"`
 	Type     string         `json:"type"`
-	Function openAIFunction `json:"function"`
+	Function nvidiaFunction `json:"function"`
 }
 
-type openAIFunction struct {
+type nvidiaFunction struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
 }
 
-type openAIUsage struct {
+type nvidiaUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 }
 
-type openAIError struct {
+type nvidiaError struct {
 	Message string  `json:"message"`
 	Type    string  `json:"type"`
 	Param   *string `json:"param,omitempty"`
 	Code    *string `json:"code,omitempty"`
 }
 
-// Anthropic format structures
-type anthropicResponse struct {
-	ID           string             `json:"id"`
-	Type         string             `json:"type"`
-	Role         string             `json:"role"`
-	Content      []anthropicContent `json:"content"`
-	Model        string             `json:"model"`
-	StopReason   *string            `json:"stop_reason,omitempty"`
-	StopSequence *string            `json:"stop_sequence,omitempty"`
-	Usage        *anthropicUsage    `json:"usage,omitempty"`
-	Error        *anthropicError    `json:"error,omitempty"`
-}
-
-type anthropicContent struct {
-	Type      string                 `json:"type"`
-	Text      *string                `json:"text,omitempty"`
-	ID        *string                `json:"id,omitempty"`
-	Name      *string                `json:"name,omitempty"`
-	Input     map[string]interface{} `json:"input,omitempty"`
-	ToolUseId *string                `json:"tool_use_id,omitempty"`
-	Content   interface{}            `json:"content,omitempty"`
-	IsError   *bool                  `json:"is_error,omitempty"`
-}
-
-type anthropicUsage struct {
-	InputTokens            int  `json:"input_tokens"`
-	OutputTokens           int  `json:"output_tokens"`
-	CacheReadInputTokens   *int `json:"cache_read_input_tokens,omitempty"`
-	CacheCreateInputTokens *int `json:"cache_create_input_tokens,omitempty"`
-}
-
-type anthropicError struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
-}
-
-func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, error) {
-	var openaiResp openAIResponse
-	if err := json.Unmarshal(openaiData, &openaiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal OpenAI response: %w", err)
+func (p *NvidiaProvider) convertNvidiaToAnthropic(nvidiaData []byte) ([]byte, error) {
+	var nvidiaResp nvidiaResponse
+	if err := json.Unmarshal(nvidiaData, &nvidiaResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Nvidia response: %w", err)
 	}
 
 	// Handle error responses
-	if openaiResp.Error != nil {
+	if nvidiaResp.Error != nil {
 		anthropicResp := anthropicResponse{
-			ID:    openaiResp.ID,
+			ID:    nvidiaResp.ID,
 			Type:  "error",
-			Model: openaiResp.Model,
+			Model: nvidiaResp.Model,
 			Error: &anthropicError{
-				Type:    p.mapOpenAIErrorType(openaiResp.Error.Type),
-				Message: openaiResp.Error.Message,
+				Type:    p.mapNvidiaErrorType(nvidiaResp.Error.Type),
+				Message: nvidiaResp.Error.Message,
 			},
 		}
 		return json.Marshal(anthropicResp)
 	}
 
 	// Handle streaming vs non-streaming responses
-	if len(openaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in OpenAI response")
+	if len(nvidiaResp.Choices) == 0 {
+		return nil, fmt.Errorf("no choices in Nvidia response")
 	}
 
-	choice := openaiResp.Choices[0]
+	choice := nvidiaResp.Choices[0]
 	message := choice.Message
 	if message == nil {
 		message = choice.Delta // Handle streaming responses
@@ -186,10 +150,10 @@ func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, er
 	}
 
 	anthropicResp := anthropicResponse{
-		ID:    openaiResp.ID,
+		ID:    nvidiaResp.ID,
 		Type:  "message",
 		Role:  "assistant",
-		Model: openaiResp.Model,
+		Model: nvidiaResp.Model,
 	}
 
 	// Convert content based on message type
@@ -205,10 +169,10 @@ func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, er
 	}
 
 	// Convert usage
-	if openaiResp.Usage != nil {
+	if nvidiaResp.Usage != nil {
 		usage := &anthropicUsage{
-			InputTokens:  openaiResp.Usage.PromptTokens,
-			OutputTokens: openaiResp.Usage.CompletionTokens,
+			InputTokens:  nvidiaResp.Usage.PromptTokens,
+			OutputTokens: nvidiaResp.Usage.CompletionTokens,
 		}
 		anthropicResp.Usage = usage
 	}
@@ -216,7 +180,7 @@ func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, er
 	return json.Marshal(anthropicResp)
 }
 
-func (p *OpenAIProvider) convertMessageContent(message *openAIMessage) ([]anthropicContent, error) {
+func (p *NvidiaProvider) convertMessageContent(message *nvidiaMessage) ([]anthropicContent, error) {
 	var content []anthropicContent
 
 	// Handle regular text content
@@ -261,7 +225,7 @@ func (p *OpenAIProvider) convertMessageContent(message *openAIMessage) ([]anthro
 
 		claudeToolID := p.convertToolCallID(*message.ToolCallId)
 		content = append(content, anthropicContent{
-			Type:      "tool_result", 
+			Type:      "tool_result",
 			ToolUseId: &claudeToolID,
 			Content:   toolContent,
 		})
@@ -297,7 +261,7 @@ func (p *OpenAIProvider) convertMessageContent(message *openAIMessage) ([]anthro
 	return content, nil
 }
 
-func (p *OpenAIProvider) convertStopReason(openaiReason string) *string {
+func (p *NvidiaProvider) convertStopReason(nvidiaReason string) *string {
 	mapping := map[string]string{
 		"stop":           "end_turn",
 		"length":         "max_tokens",
@@ -307,7 +271,7 @@ func (p *OpenAIProvider) convertStopReason(openaiReason string) *string {
 		"null":           "end_turn",
 	}
 
-	if anthropicReason, exists := mapping[openaiReason]; exists {
+	if anthropicReason, exists := mapping[nvidiaReason]; exists {
 		return &anthropicReason
 	}
 
@@ -315,7 +279,7 @@ func (p *OpenAIProvider) convertStopReason(openaiReason string) *string {
 	return &defaultReason
 }
 
-func (p *OpenAIProvider) mapOpenAIErrorType(openaiType string) string {
+func (p *NvidiaProvider) mapNvidiaErrorType(nvidiaType string) string {
 	mapping := map[string]string{
 		"invalid_request_error":    "invalid_request_error",
 		"authentication_error":     "authentication_error",
@@ -327,17 +291,17 @@ func (p *OpenAIProvider) mapOpenAIErrorType(openaiType string) string {
 		"insufficient_quota_error": "billing_error",
 	}
 
-	if anthropicType, exists := mapping[openaiType]; exists {
+	if anthropicType, exists := mapping[nvidiaType]; exists {
 		return anthropicType
 	}
 
 	return "api_error"
 }
 
-func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state *StreamState) ([]byte, error) {
+func (p *NvidiaProvider) convertNvidiaToAnthropicStream(nvidiaData []byte, state *StreamState) ([]byte, error) {
 	var rawChunk map[string]interface{}
-	if err := json.Unmarshal(openaiData, &rawChunk); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal OpenAI streaming response: %w", err)
+	if err := json.Unmarshal(nvidiaData, &rawChunk); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Nvidia streaming response: %w", err)
 	}
 
 	var events []byte
@@ -392,7 +356,7 @@ func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state
 	return events, nil
 }
 
-func (p *OpenAIProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
+func (p *NvidiaProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
 	usage := map[string]interface{}{
 		"input_tokens":  0,
 		"output_tokens": 1,
@@ -424,13 +388,13 @@ func (p *OpenAIProvider) createMessageStartEvent(messageID, model string, firstC
 	}
 }
 
-func (p *OpenAIProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
+func (p *NvidiaProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
 	jsonData, _ := json.Marshal(data)
 	return []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(jsonData)))
 }
 
 // handleTextContent processes text content streaming
-func (p *OpenAIProvider) handleTextContent(content string, state *StreamState) []byte {
+func (p *NvidiaProvider) handleTextContent(content string, state *StreamState) []byte {
 	var events []byte
 
 	// Get or create text content block at index 0
@@ -450,7 +414,7 @@ func (p *OpenAIProvider) handleTextContent(content string, state *StreamState) [
 }
 
 // handleToolCalls processes tool call streaming
-func (p *OpenAIProvider) handleToolCalls(toolCalls []interface{}, state *StreamState) []byte {
+func (p *NvidiaProvider) handleToolCalls(toolCalls []interface{}, state *StreamState) []byte {
 	var events []byte
 
 	for _, toolCall := range toolCalls {
@@ -464,7 +428,7 @@ func (p *OpenAIProvider) handleToolCalls(toolCalls []interface{}, state *StreamS
 }
 
 // handleSingleToolCall processes a single tool call
-func (p *OpenAIProvider) handleSingleToolCall(toolCall map[string]interface{}, state *StreamState) []byte {
+func (p *NvidiaProvider) handleSingleToolCall(toolCall map[string]interface{}, state *StreamState) []byte {
 	var events []byte
 
 	// Parse tool call data
@@ -500,8 +464,8 @@ func (p *OpenAIProvider) handleSingleToolCall(toolCall map[string]interface{}, s
 	return events
 }
 
-// OpenAIToolCallData holds parsed tool call information for OpenAI provider
-type OpenAIToolCallData struct {
+// NvidiaToolCallData holds parsed tool call information for Nvidia provider
+type NvidiaToolCallData struct {
 	Index       int
 	HasIndex    bool
 	ID          string
@@ -509,9 +473,9 @@ type OpenAIToolCallData struct {
 	Arguments   string
 }
 
-// parseToolCallData extracts tool call information from OpenAI chunk
-func (p *OpenAIProvider) parseToolCallData(toolCall map[string]interface{}) OpenAIToolCallData {
-	data := OpenAIToolCallData{}
+// parseToolCallData extracts tool call information from Nvidia chunk
+func (p *NvidiaProvider) parseToolCallData(toolCall map[string]interface{}) NvidiaToolCallData {
+	data := NvidiaToolCallData{}
 
 	// Parse tool call index
 	toolCallIndex, hasIndex := toolCall["index"].(float64)
@@ -535,7 +499,7 @@ func (p *OpenAIProvider) parseToolCallData(toolCall map[string]interface{}) Open
 }
 
 // findOrCreateContentBlock locates existing content block or creates new one
-func (p *OpenAIProvider) findOrCreateContentBlock(data OpenAIToolCallData, state *StreamState) int {
+func (p *NvidiaProvider) findOrCreateContentBlock(data NvidiaToolCallData, state *StreamState) int {
 	// First try to find by tool call index
 	if data.HasIndex {
 		for blockIdx, block := range state.ContentBlocks {
@@ -571,19 +535,19 @@ func (p *OpenAIProvider) findOrCreateContentBlock(data OpenAIToolCallData, state
 }
 
 // updateContentBlock updates content block with new tool call data
-func (p *OpenAIProvider) updateContentBlock(block *ContentBlockState, data OpenAIToolCallData) {
+func (p *NvidiaProvider) updateContentBlock(block *ContentBlockState, data NvidiaToolCallData) {
 	if data.FunctionName != "" {
 		block.ToolName = data.FunctionName
 	}
 }
 
 // shouldSendStartEvent determines if content_block_start event should be sent
-func (p *OpenAIProvider) shouldSendStartEvent(block *ContentBlockState) bool {
+func (p *NvidiaProvider) shouldSendStartEvent(block *ContentBlockState) bool {
 	return block.ToolCallID != "" && block.ToolName != ""
 }
 
 // createContentBlockStartEvent creates content_block_start SSE event
-func (p *OpenAIProvider) createContentBlockStartEvent(index int, block *ContentBlockState) []byte {
+func (p *NvidiaProvider) createContentBlockStartEvent(index int, block *ContentBlockState) []byte {
 	claudeToolID := p.convertToolCallID(block.ToolCallID)
 
 	contentBlockStartEvent := map[string]interface{}{
@@ -599,8 +563,8 @@ func (p *OpenAIProvider) createContentBlockStartEvent(index int, block *ContentB
 	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
 }
 
-// convertToolCallID converts OpenAI tool call ID to Claude format
-func (p *OpenAIProvider) convertToolCallID(toolCallID string) string {
+// convertToolCallID converts Nvidia tool call ID to Claude format
+func (p *NvidiaProvider) convertToolCallID(toolCallID string) string {
 	if strings.HasPrefix(toolCallID, "toolu_") {
 		return toolCallID
 	}
@@ -611,7 +575,7 @@ func (p *OpenAIProvider) convertToolCallID(toolCallID string) string {
 }
 
 // calculateArgumentsDelta calculates the incremental part of arguments
-func (p *OpenAIProvider) calculateArgumentsDelta(newArgs, oldArgs string) string {
+func (p *NvidiaProvider) calculateArgumentsDelta(newArgs, oldArgs string) string {
 	// Check if arguments are incremental (common case)
 	if len(newArgs) > len(oldArgs) && strings.HasPrefix(newArgs, oldArgs) {
 		return newArgs[len(oldArgs):] // Extract new part
@@ -621,7 +585,7 @@ func (p *OpenAIProvider) calculateArgumentsDelta(newArgs, oldArgs string) string
 }
 
 // createInputDeltaEvent creates input_json_delta SSE event
-func (p *OpenAIProvider) createInputDeltaEvent(index int, partialJSON string) []byte {
+func (p *NvidiaProvider) createInputDeltaEvent(index int, partialJSON string) []byte {
 	inputDeltaEvent := map[string]interface{}{
 		"type":  "content_block_delta",
 		"index": index,
@@ -634,7 +598,7 @@ func (p *OpenAIProvider) createInputDeltaEvent(index int, partialJSON string) []
 }
 
 // getOrCreateTextBlock gets or creates text content block at index 0
-func (p *OpenAIProvider) getOrCreateTextBlock(state *StreamState) int {
+func (p *NvidiaProvider) getOrCreateTextBlock(state *StreamState) int {
 	textIndex := 0
 	if _, exists := state.ContentBlocks[textIndex]; !exists {
 		state.ContentBlocks[textIndex] = &ContentBlockState{
@@ -645,7 +609,7 @@ func (p *OpenAIProvider) getOrCreateTextBlock(state *StreamState) int {
 }
 
 // createTextBlockStartEvent creates content_block_start event for text
-func (p *OpenAIProvider) createTextBlockStartEvent(index int) []byte {
+func (p *NvidiaProvider) createTextBlockStartEvent(index int) []byte {
 	contentBlockStartEvent := map[string]interface{}{
 		"type":  "content_block_start",
 		"index": index,
@@ -658,7 +622,7 @@ func (p *OpenAIProvider) createTextBlockStartEvent(index int) []byte {
 }
 
 // createTextDeltaEvent creates content_block_delta event for text
-func (p *OpenAIProvider) createTextDeltaEvent(index int, text string) []byte {
+func (p *NvidiaProvider) createTextDeltaEvent(index int, text string) []byte {
 	contentDeltaEvent := map[string]interface{}{
 		"type":  "content_block_delta",
 		"index": index,
@@ -671,7 +635,7 @@ func (p *OpenAIProvider) createTextDeltaEvent(index int, text string) []byte {
 }
 
 // handleFinishReason processes finish reasons and sends appropriate events
-func (p *OpenAIProvider) handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte {
+func (p *NvidiaProvider) handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte {
 	var events []byte
 
 	// Send content_block_stop for all active content blocks
@@ -715,7 +679,7 @@ func (p *OpenAIProvider) handleFinishReason(reason string, chunk map[string]inte
 }
 
 // convertUsage handles usage information conversion
-func (p *OpenAIProvider) convertUsage(usage map[string]interface{}) map[string]interface{} {
+func (p *NvidiaProvider) convertUsage(usage map[string]interface{}) map[string]interface{} {
 	anthropicUsage := make(map[string]interface{})
 
 	// Map token fields

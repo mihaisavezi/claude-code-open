@@ -32,6 +32,10 @@ func TestRegistry_GetByDomain(t *testing.T) {
 		{"https://api.openrouter.ai/api/v1/chat/completions", "openrouter"},
 		{"https://api.openai.com/v1/chat/completions", "openai"},
 		{"https://api.anthropic.com/v1/messages", "anthropic"},
+		{"https://integrate.api.nvidia.com/v1/chat/completions", "nvidia"},
+		{"https://api.nvidia.com/v1/chat/completions", "nvidia"},
+		{"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", "gemini"},
+		{"https://googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent", "gemini"},
 	}
 
 	for _, tc := range testCases {
@@ -63,7 +67,7 @@ func TestRegistry_List(t *testing.T) {
 
 	providers := registry.List()
 
-	expectedProviders := []string{"openrouter", "openai", "anthropic"}
+	expectedProviders := []string{"openrouter", "openai", "anthropic", "nvidia", "gemini"}
 	assert.Len(t, providers, len(expectedProviders), "should have expected number of providers")
 
 	// Check that all expected providers are present

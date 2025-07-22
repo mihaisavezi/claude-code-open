@@ -133,14 +133,7 @@ func (p *OpenRouterProvider) convertContent(message map[string]interface{}) []ma
 	if toolCalls, ok := message["tool_calls"].([]interface{}); ok {
 		for _, toolCall := range toolCalls {
 			if tcMap, ok := toolCall.(map[string]interface{}); ok {
-				// Log tool call for debugging
-				if function, ok := tcMap["function"].(map[string]interface{}); ok {
-					toolCallID, _ := tcMap["id"].(string)
-					functionName, _ := function["name"].(string)
-					arguments, _ := function["arguments"].(string)
-					fmt.Printf("INFO: Non-streaming tool call - ID: %s, Name: %s, Args: %s\n", 
-						toolCallID, functionName, arguments)
-				}
+				// Convert tool call to Claude format
 				
 				toolContent := p.convertToolCall(tcMap)
 				if toolContent != nil {
@@ -163,46 +156,53 @@ func (p *OpenRouterProvider) convertContent(message map[string]interface{}) []ma
 
 // convertToolCall converts OpenRouter tool call to Anthropic tool_use format
 func (p *OpenRouterProvider) convertToolCall(toolCall map[string]interface{}) map[string]interface{} {
-	if function, ok := toolCall["function"].(map[string]interface{}); ok {
-		toolCallID, _ := toolCall["id"].(string)
-		functionName, _ := function["name"].(string)
-		arguments, _ := function["arguments"].(string)
+	function, ok := toolCall["function"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
 
-		// Parse arguments JSON
-		var input map[string]interface{}
-		if arguments != "" {
-			if err := json.Unmarshal([]byte(arguments), &input); err != nil {
-				// If parsing fails, use empty input
-				input = map[string]interface{}{}
-			} else {
-				input = input
-			}
-		} else {
-			input = map[string]interface{}{}
-		}
+	toolCallID, _ := toolCall["id"].(string)
+	functionName, _ := function["name"].(string)
+	arguments, _ := function["arguments"].(string)
 
-		// Convert ID format: call_ -> toolu_
-		// Handle case where toolCallID might already have toolu_ prefix
-		var claudeID string
-		if strings.HasPrefix(toolCallID, "toolu_") {
-			claudeID = toolCallID
-		} else if strings.HasPrefix(toolCallID, "call_") {
-			claudeID = "toolu_" + strings.TrimPrefix(toolCallID, "call_")
-		} else {
-			claudeID = "toolu_" + toolCallID
-		}
+	// Parse arguments JSON
+	input := p.parseToolArguments(arguments)
+	
+	// Convert ID format: call_ -> toolu_
+	claudeID := p.convertToolCallID(toolCallID)
 
-		result := map[string]interface{}{
-			"type":  "tool_use",
-			"id":    claudeID,
-			"name":  functionName,
-			"input": input,
-		}
-		
-		return result
+	return map[string]interface{}{
+		"type":  "tool_use",
+		"id":    claudeID,
+		"name":  functionName,
+		"input": input,
+	}
+}
+
+// parseToolArguments parses JSON arguments or returns empty map
+func (p *OpenRouterProvider) parseToolArguments(arguments string) map[string]interface{} {
+	if arguments == "" {
+		return map[string]interface{}{}
 	}
 	
-	return nil
+	var input map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &input); err != nil {
+		// If parsing fails, use empty input
+		return map[string]interface{}{}
+	}
+	
+	return input
+}
+
+// convertToolCallID converts OpenRouter tool call ID to Claude format
+func (p *OpenRouterProvider) convertToolCallID(toolCallID string) string {
+	if strings.HasPrefix(toolCallID, "toolu_") {
+		return toolCallID
+	}
+	if strings.HasPrefix(toolCallID, "call_") {
+		return "toolu_" + strings.TrimPrefix(toolCallID, "call_")
+	}
+	return "toolu_" + toolCallID
 }
 
 // convertAnnotations handles OpenRouter web search annotations
@@ -377,40 +377,18 @@ func (p *OpenRouterProvider) formatSSEEvent(eventType string, data map[string]in
 func (p *OpenRouterProvider) handleTextContent(content string, state *StreamState) []byte {
 	var events []byte
 
-	// Get or create text content block at index 0 (or next available)
-	textIndex := 0
-	if _, exists := state.ContentBlocks[textIndex]; !exists {
-		state.ContentBlocks[textIndex] = &ContentBlockState{
-			Type: "text",
-		}
-	}
-
+	// Get or create text content block at index 0
+	textIndex := p.getOrCreateTextBlock(state)
 	contentBlock := state.ContentBlocks[textIndex]
 
-	// Send content_block_start for text if not sent yet
+	// Send content_block_start event if needed
 	if !contentBlock.StartSent {
-		contentBlockStartEvent := map[string]interface{}{
-			"type":  "content_block_start",
-			"index": textIndex,
-			"content_block": map[string]interface{}{
-				"type": "text",
-				"text": "",
-			},
-		}
-		events = append(events, p.formatSSEEvent("content_block_start", contentBlockStartEvent)...)
+		events = append(events, p.createTextBlockStartEvent(textIndex)...)
 		contentBlock.StartSent = true
 	}
 
-	// Send content_block_delta for text
-	contentDeltaEvent := map[string]interface{}{
-		"type":  "content_block_delta",
-		"index": textIndex,
-		"delta": map[string]interface{}{
-			"type": "text_delta",
-			"text": content,
-		},
-	}
-	events = append(events, p.formatSSEEvent("content_block_delta", contentDeltaEvent)...)
+	// Send content_block_delta event
+	events = append(events, p.createTextDeltaEvent(textIndex, content)...)
 
 	return events
 }
@@ -433,135 +411,198 @@ func (p *OpenRouterProvider) handleToolCalls(toolCalls []interface{}, state *Str
 func (p *OpenRouterProvider) handleSingleToolCall(toolCall map[string]interface{}, state *StreamState) []byte {
 	var events []byte
 
-	// Get tool call index - OpenRouter uses this to identify tool calls across chunks
+	// Parse tool call data using helper
+	toolCallData := p.parseToolCallData(toolCall)
+
+	// Find or create content block
+	contentBlockIndex := p.findOrCreateContentBlock(toolCallData, state)
+	if contentBlockIndex == -1 {
+		return events // Skip if couldn't find or create
+	}
+
+	contentBlock := state.ContentBlocks[contentBlockIndex]
+
+	// Update content block with new data
+	p.updateContentBlock(contentBlock, toolCallData)
+
+	// Send content_block_start event if needed
+	if !contentBlock.StartSent && p.shouldSendStartEvent(contentBlock) {
+		events = append(events, p.createContentBlockStartEvent(contentBlockIndex, contentBlock)...)
+		contentBlock.StartSent = true
+	}
+
+	// Handle argument streaming
+	if toolCallData.Arguments != "" && toolCallData.Arguments != contentBlock.Arguments {
+		newPart := p.calculateArgumentsDelta(toolCallData.Arguments, contentBlock.Arguments)
+		contentBlock.Arguments = toolCallData.Arguments
+
+		if newPart != "" {
+			events = append(events, p.createInputDeltaEvent(contentBlockIndex, newPart)...)
+		}
+	}
+
+	return events
+}
+
+// ToolCallData holds parsed tool call information
+type ToolCallData struct {
+	Index       int
+	HasIndex    bool
+	ID          string
+	FunctionName string
+	Arguments   string
+}
+
+// parseToolCallData extracts tool call information from OpenRouter chunk
+func (p *OpenRouterProvider) parseToolCallData(toolCall map[string]interface{}) ToolCallData {
+	data := ToolCallData{}
+
+	// Parse tool call index
 	toolCallIndex, hasIndex := toolCall["index"].(float64)
 	if !hasIndex {
-		// If no index, try to get it as int
 		if idx, ok := toolCall["index"].(int); ok {
 			toolCallIndex = float64(idx)
 			hasIndex = true
 		}
 	}
+	data.Index = int(toolCallIndex)
+	data.HasIndex = hasIndex
 
-	// Get ID and function details
-	toolCallID, _ := toolCall["id"].(string)
-	var functionName, arguments string
+	// Parse ID and function details
+	data.ID, _ = toolCall["id"].(string)
 	if function, ok := toolCall["function"].(map[string]interface{}); ok {
-		functionName, _ = function["name"].(string)
-		arguments, _ = function["arguments"].(string)
+		data.FunctionName, _ = function["name"].(string)
+		data.Arguments, _ = function["arguments"].(string)
 	}
 
-	// For subsequent chunks, OpenRouter only sends index, no ID
-	// Find existing content block by index if no ID is provided
-	var contentBlockIndex int = -1
-	if hasIndex {
-		idx := int(toolCallIndex)
-		// Look for existing content block with this tool call index
+	// Tool call data parsed successfully
+
+	return data
+}
+
+// findOrCreateContentBlock locates existing content block or creates new one
+func (p *OpenRouterProvider) findOrCreateContentBlock(data ToolCallData, state *StreamState) int {
+	// First try to find by tool call index
+	if data.HasIndex {
 		for blockIdx, block := range state.ContentBlocks {
-			if block.Type == "tool_use" && block.ToolCallIndex == idx {
-				contentBlockIndex = blockIdx
-				break
+			if block.Type == "tool_use" && block.ToolCallIndex == data.Index {
+				return blockIdx
 			}
 		}
 	}
 
-	// If we still haven't found it and have an ID, search by ID
-	if contentBlockIndex == -1 && toolCallID != "" {
-		for idx, block := range state.ContentBlocks {
-			if block.Type == "tool_use" && block.ToolCallID == toolCallID {
-				contentBlockIndex = idx
-				break
+	// Then try to find by ID
+	if data.ID != "" {
+		for blockIdx, block := range state.ContentBlocks {
+			if block.Type == "tool_use" && block.ToolCallID == data.ID {
+				return blockIdx
 			}
 		}
 	}
 
-	// Create new content block if not found and we have an ID (first chunk)
-	if contentBlockIndex == -1 && toolCallID != "" {
-		// Find next available index
-		contentBlockIndex = len(state.ContentBlocks)
+	// Create new content block if we have an ID (first chunk)
+	if data.ID != "" {
+		contentBlockIndex := len(state.ContentBlocks)
 		state.ContentBlocks[contentBlockIndex] = &ContentBlockState{
 			Type:           "tool_use",
-			ToolCallID:     toolCallID,
-			ToolCallIndex:  int(toolCallIndex),
-			ToolName:       functionName,
+			ToolCallID:     data.ID,
+			ToolCallIndex:  data.Index,
+			ToolName:       data.FunctionName,
 			Arguments:      "",
 		}
+		return contentBlockIndex
 	}
 
-	// Skip if we couldn't find or create a content block
-	if contentBlockIndex == -1 {
-		return events
+	return -1 // Couldn't find or create
+}
+
+// updateContentBlock updates content block with new tool call data
+func (p *OpenRouterProvider) updateContentBlock(block *ContentBlockState, data ToolCallData) {
+	if data.FunctionName != "" {
+		block.ToolName = data.FunctionName
 	}
+}
 
-	contentBlock := state.ContentBlocks[contentBlockIndex]
+// shouldSendStartEvent determines if content_block_start event should be sent
+func (p *OpenRouterProvider) shouldSendStartEvent(block *ContentBlockState) bool {
+	return block.ToolCallID != "" && block.ToolName != ""
+}
 
-	// Update name if we have it (might be empty in subsequent chunks)
-	if functionName != "" {
-		contentBlock.ToolName = functionName
+// createContentBlockStartEvent creates content_block_start SSE event
+func (p *OpenRouterProvider) createContentBlockStartEvent(index int, block *ContentBlockState) []byte {
+	claudeToolID := p.convertToolCallID(block.ToolCallID)
+
+	contentBlockStartEvent := map[string]interface{}{
+		"type":  "content_block_start",
+		"index": index,
+		"content_block": map[string]interface{}{
+			"type":  "tool_use",
+			"id":    claudeToolID,
+			"name":  block.ToolName,
+			"input": map[string]interface{}{},
+		},
 	}
+	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
+}
 
-	// Log tool call details
-	if arguments != "" {
-		fmt.Printf("INFO: Streaming tool call - ID: %s, Index: %d, Name: %s, Args: %s\n", 
-			contentBlock.ToolCallID, contentBlock.ToolCallIndex, contentBlock.ToolName, arguments)
+// calculateArgumentsDelta calculates the incremental part of arguments
+func (p *OpenRouterProvider) calculateArgumentsDelta(newArgs, oldArgs string) string {
+	// Check if arguments are incremental (common case)
+	if len(newArgs) > len(oldArgs) && strings.HasPrefix(newArgs, oldArgs) {
+		return newArgs[len(oldArgs):] // Extract new part
 	}
+	// Non-incremental case - return entire new arguments
+	return newArgs
+}
 
-	// Send content_block_start for tool_use if not sent yet
-	if !contentBlock.StartSent && contentBlock.ToolCallID != "" && contentBlock.ToolName != "" {
-		// Convert toolCallID to Claude format (toolu_ prefix)
-		var claudeToolID string
-		if strings.HasPrefix(contentBlock.ToolCallID, "toolu_") {
-			claudeToolID = contentBlock.ToolCallID
-		} else if strings.HasPrefix(contentBlock.ToolCallID, "call_") {
-			claudeToolID = "toolu_" + strings.TrimPrefix(contentBlock.ToolCallID, "call_")
-		} else {
-			claudeToolID = "toolu_" + contentBlock.ToolCallID
-		}
-
-		contentBlockStartEvent := map[string]interface{}{
-			"type":  "content_block_start",
-			"index": contentBlockIndex,
-			"content_block": map[string]interface{}{
-				"type":  "tool_use",
-				"id":    claudeToolID,
-				"name":  contentBlock.ToolName,
-				"input": map[string]interface{}{},
-			},
-		}
-		events = append(events, p.formatSSEEvent("content_block_start", contentBlockStartEvent)...)
-		contentBlock.StartSent = true
+// createInputDeltaEvent creates input_json_delta SSE event
+func (p *OpenRouterProvider) createInputDeltaEvent(index int, partialJSON string) []byte {
+	inputDeltaEvent := map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": index,
+		"delta": map[string]interface{}{
+			"type":         "input_json_delta",
+			"partial_json": partialJSON,
+		},
 	}
+	return p.formatSSEEvent("content_block_delta", inputDeltaEvent)
+}
 
-	// Handle arguments - only send delta if we have new content
-	if arguments != "" && arguments != contentBlock.Arguments {
-		var newPart string
-		
-		// Check if the new arguments string contains the previous one as a prefix
-		if len(arguments) > len(contentBlock.Arguments) && strings.HasPrefix(arguments, contentBlock.Arguments) {
-			// Normal incremental case - extract new part
-			newPart = arguments[len(contentBlock.Arguments):]
-		} else {
-			// Non-incremental case or completely different - send the whole new part
-			newPart = arguments
-		}
-		
-		contentBlock.Arguments = arguments
-
-		// Send input_json_delta for the new part
-		if newPart != "" {
-			inputDeltaEvent := map[string]interface{}{
-				"type":  "content_block_delta",
-				"index": contentBlockIndex,
-				"delta": map[string]interface{}{
-					"type":         "input_json_delta",
-					"partial_json": newPart,
-				},
-			}
-			events = append(events, p.formatSSEEvent("content_block_delta", inputDeltaEvent)...)
+// getOrCreateTextBlock gets or creates text content block at index 0
+func (p *OpenRouterProvider) getOrCreateTextBlock(state *StreamState) int {
+	textIndex := 0
+	if _, exists := state.ContentBlocks[textIndex]; !exists {
+		state.ContentBlocks[textIndex] = &ContentBlockState{
+			Type: "text",
 		}
 	}
+	return textIndex
+}
 
-	return events
+// createTextBlockStartEvent creates content_block_start event for text
+func (p *OpenRouterProvider) createTextBlockStartEvent(index int) []byte {
+	contentBlockStartEvent := map[string]interface{}{
+		"type":  "content_block_start",
+		"index": index,
+		"content_block": map[string]interface{}{
+			"type": "text",
+			"text": "",
+		},
+	}
+	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
+}
+
+// createTextDeltaEvent creates content_block_delta event for text
+func (p *OpenRouterProvider) createTextDeltaEvent(index int, text string) []byte {
+	contentDeltaEvent := map[string]interface{}{
+		"type":  "content_block_delta",
+		"index": index,
+		"delta": map[string]interface{}{
+			"type": "text_delta",
+			"text": text,
+		},
+	}
+	return p.formatSSEEvent("content_block_delta", contentDeltaEvent)
 }
 
 // handleFinishReason processes finish reasons and sends appropriate events
