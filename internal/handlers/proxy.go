@@ -419,7 +419,7 @@ func (h *ProxyHandler) httpError(w http.ResponseWriter, code int, format string,
 
 func (h *ProxyHandler) transformRequestToProviderFormat(requestBody []byte, providerName string) ([]byte, error) {
 	switch providerName {
-	case "openrouter", "openai":
+	case "openrouter", "openai", "nvidia":
 		return h.transformAnthropicToOpenAI(requestBody)
 	case "gemini":
 		return h.transformAnthropicToGemini(requestBody)
