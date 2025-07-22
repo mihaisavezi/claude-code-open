@@ -56,14 +56,14 @@ func (p *OpenAIProvider) TransformStream(chunk []byte, state *StreamState) ([]by
 
 // OpenAI format structures
 type openAIResponse struct {
-	ID                string        `json:"id"`
-	Object            string        `json:"object"`
-	Created           int64         `json:"created"`
-	Model             string        `json:"model"`
+	ID                string         `json:"id"`
+	Object            string         `json:"object"`
+	Created           int64          `json:"created"`
+	Model             string         `json:"model"`
 	Choices           []openAIChoice `json:"choices"`
-	Usage             *openAIUsage  `json:"usage,omitempty"`
-	SystemFingerprint *string       `json:"system_fingerprint,omitempty"`
-	Error             *openAIError  `json:"error,omitempty"`
+	Usage             *openAIUsage   `json:"usage,omitempty"`
+	SystemFingerprint *string        `json:"system_fingerprint,omitempty"`
+	Error             *openAIError   `json:"error,omitempty"`
 }
 
 type openAIChoice struct {
@@ -354,22 +354,36 @@ func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state
 
 			// Handle delta content
 			if delta, ok := firstChoice["delta"].(map[string]interface{}); ok {
-				// Send content_block_start if we have content and haven't sent it yet
-				if content, ok := delta["content"].(string); ok && content != "" && !state.ContentBlockStartSent {
-					contentBlockStartEvent := map[string]interface{}{
-						"type":  "content_block_start",
-						"index": 0,
-						"content_block": map[string]interface{}{
-							"type": "text",
-							"text": "",
-						},
-					}
-					events = append(events, p.formatSSEEvent("content_block_start", contentBlockStartEvent)...)
-					state.ContentBlockStartSent = true
+				// Initialize content blocks map if needed
+				if state.ContentBlocks == nil {
+					state.ContentBlocks = make(map[int]*ContentBlockState)
 				}
 
-				// Handle text content delta
+				// Send content_block_start if we have content and haven't sent it yet
 				if content, ok := delta["content"].(string); ok && content != "" {
+					// Get or create text content block at index 0
+					if _, exists := state.ContentBlocks[0]; !exists {
+						state.ContentBlocks[0] = &ContentBlockState{
+							Type: "text",
+						}
+					}
+
+					contentBlock := state.ContentBlocks[0]
+
+					if !contentBlock.StartSent {
+						contentBlockStartEvent := map[string]interface{}{
+							"type":  "content_block_start",
+							"index": 0,
+							"content_block": map[string]interface{}{
+								"type": "text",
+								"text": "",
+							},
+						}
+						events = append(events, p.formatSSEEvent("content_block_start", contentBlockStartEvent)...)
+						contentBlock.StartSent = true
+					}
+
+					// Handle text content delta
 					contentDeltaEvent := map[string]interface{}{
 						"type":  "content_block_delta",
 						"index": 0,
@@ -386,12 +400,15 @@ func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state
 			if finishReason, ok := firstChoice["finish_reason"]; ok && finishReason != nil {
 				if reason, ok := finishReason.(string); ok {
 					// Send content_block_stop if we had content
-					if state.ContentBlockStartSent {
-						contentStopEvent := map[string]interface{}{
-							"type":  "content_block_stop",
-							"index": 0,
+					if state.ContentBlocks != nil {
+						if contentBlock, exists := state.ContentBlocks[0]; exists && contentBlock.StartSent && !contentBlock.StopSent {
+							contentStopEvent := map[string]interface{}{
+								"type":  "content_block_stop",
+								"index": 0,
+							}
+							events = append(events, p.formatSSEEvent("content_block_stop", contentStopEvent)...)
+							contentBlock.StopSent = true
 						}
-						events = append(events, p.formatSSEEvent("content_block_stop", contentStopEvent)...)
 					}
 
 					// Send message_delta with stop reason

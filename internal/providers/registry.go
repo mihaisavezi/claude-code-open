@@ -19,11 +19,24 @@ type Provider interface {
 
 // StreamState tracks streaming conversion state
 type StreamState struct {
-	MessageStartSent      bool
-	ContentBlockStartSent bool
-	MessageID             string
-	Model                 string
-	InitialUsage          map[string]interface{}
+	MessageStartSent bool
+	MessageID        string
+	Model            string
+	InitialUsage     map[string]interface{}
+
+	// Content block tracking for multiple blocks (text, tool_use, etc.)
+	ContentBlocks map[int]*ContentBlockState
+	CurrentIndex  int
+}
+
+// ContentBlockState tracks individual content block state during streaming
+type ContentBlockState struct {
+	Type       string // "text" or "tool_use"
+	StartSent  bool
+	StopSent   bool
+	ToolCallID string // For tool_use blocks
+	ToolName   string // For tool_use blocks
+	Arguments  string // Accumulated arguments for tool_use blocks
 }
 
 // Registry manages provider instances
@@ -56,15 +69,15 @@ func (r *Registry) GetByDomain(apiBase string) (Provider, error) {
 	}
 
 	domain := strings.ToLower(u.Hostname())
-	
+
 	// Domain mapping to provider names
 	domainProviderMap := map[string]string{
-		"openrouter.ai":        "openrouter",
-		"api.openrouter.ai":    "openrouter",
-		"api.openai.com":       "openai",
-		"openai.com":           "openai",
-		"api.anthropic.com":    "anthropic",
-		"anthropic.com":        "anthropic",
+		"openrouter.ai":     "openrouter",
+		"api.openrouter.ai": "openrouter",
+		"api.openai.com":    "openai",
+		"openai.com":        "openai",
+		"api.anthropic.com": "anthropic",
+		"anthropic.com":     "anthropic",
 	}
 
 	if providerName, exists := domainProviderMap[domain]; exists {

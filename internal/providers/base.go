@@ -136,7 +136,7 @@ func CreateAnthropicContent(text string) []map[string]interface{} {
 	if text == "" {
 		text = ""
 	}
-	
+
 	return []map[string]interface{}{
 		{
 			"type": "text",

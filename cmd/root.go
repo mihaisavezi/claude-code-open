@@ -18,10 +18,10 @@ const (
 )
 
 var (
-	logger    *slog.Logger
-	homeDir   string
-	baseDir   string
-	cfgMgr    *config.Manager
+	logger  *slog.Logger
+	homeDir string
+	baseDir string
+	cfgMgr  *config.Manager
 )
 
 func init() {

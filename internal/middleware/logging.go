@@ -27,7 +27,7 @@ func NewLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			
+
 			wrapped := &responseWriter{
 				ResponseWriter: w,
 				status:         http.StatusOK,
@@ -36,7 +36,7 @@ func NewLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			next.ServeHTTP(wrapped, r)
 
 			duration := time.Since(start)
-			
+
 			logger.Info("HTTP Request",
 				"method", r.Method,
 				"path", r.URL.Path,

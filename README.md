@@ -6,7 +6,10 @@ A production-ready LLM proxy server that converts requests from various LLM prov
 
 - **Multi-Provider Support**: Currently supports OpenRouter, OpenAI, and Anthropic providers
 - **Dynamic Request Transformation**: Automatically converts requests from any supported provider format to Anthropic's Claude API format
-- **Streaming Support**: Full support for streaming responses with proper SSE formatting
+- **Dynamic Model Selection**: Support for explicit provider/model selection using comma notation (e.g., `openrouter,anthropic/claude-sonnet-4`)
+- **Streaming Support**: Full support for streaming responses with proper SSE formatting and tool calling
+- **Advanced Tool Calling**: Complete streaming tool call support with proper Claude SSE event generation
+- **Error Transparency**: Upstream errors (status != 200) are forwarded without transformation to preserve original error details
 - **Modular Architecture**: Clean, extensible design that makes adding new providers straightforward
 - **Production Ready**: Comprehensive error handling, logging, and process management
 - **CLI Interface**: Intuitive command-line interface for easy management
@@ -68,6 +71,53 @@ Stop the service:
 ```bash
 ccr stop
 ```
+
+## Dynamic Model Selection
+
+The router supports explicit provider and model selection using comma notation, which overrides all automatic routing logic:
+
+### Explicit Provider Selection
+
+Instead of relying on the configured routing rules, you can specify exactly which provider and model to use:
+
+```json
+{
+  "model": "openrouter,anthropic/claude-sonnet-4",
+  "messages": [
+    {"role": "user", "content": "Hello"}
+  ]
+}
+```
+
+This format (`provider,model`) will:
+- Use the specified provider (must be configured in your config)
+- Use the exact model name with that provider
+- Bypass all automatic routing rules (long context, background, etc.)
+- Preserve model suffixes like `:online` for web search
+
+### Examples
+
+```json
+// Use OpenRouter with a specific Anthropic model
+{"model": "openrouter,anthropic/claude-sonnet-4"}
+
+// Use OpenRouter with web search enabled
+{"model": "openrouter,anthropic/claude-sonnet-4:online"}
+
+// Use OpenAI directly
+{"model": "openai,gpt-4o"}
+
+// Regular model name (uses automatic routing)
+{"model": "claude-3-5-sonnet"}
+```
+
+### Automatic Routing (Fallback)
+
+When no comma is present in the model name, the router applies these rules in order:
+
+1. **Long Context**: If tokens > 60,000 → use `LongContext` config
+2. **Background Tasks**: If model starts with "claude-3-5-haiku" → use `Background` config  
+3. **Default Routing**: Use `Think`, `WebSearch`, or model as-is
 
 ## Architecture
 

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -151,7 +152,7 @@ func TestOpenRouterProvider_ConvertStopReason(t *testing.T) {
 	provider := NewOpenRouterProvider()
 
 	testCases := []struct {
-		openaiReason     string
+		openaiReason    string
 		anthropicReason string
 	}{
 		{"stop", "end_turn"},
@@ -170,4 +171,211 @@ func TestOpenRouterProvider_ConvertStopReason(t *testing.T) {
 			assert.Equal(t, tc.anthropicReason, *result, "stop reason should be converted correctly")
 		})
 	}
+}
+
+func TestOpenRouterProvider_ToolCallsTransform(t *testing.T) {
+	provider := NewOpenRouterProvider()
+
+	// Test OpenRouter response with tool calls
+	openRouterResponse := map[string]interface{}{
+		"id":    "chatcmpl-123",
+		"model": "anthropic/claude-3.5-sonnet",
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role": "assistant",
+					"tool_calls": []interface{}{
+						map[string]interface{}{
+							"id":   "call_abc123",
+							"type": "function",
+							"function": map[string]interface{}{
+								"name":      "get_weather",
+								"arguments": "{\"location\":\"San Francisco\",\"unit\":\"celsius\"}",
+							},
+						},
+					},
+				},
+				"finish_reason": "tool_calls",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     50,
+			"completion_tokens": 25,
+		},
+	}
+
+	inputData, _ := json.Marshal(openRouterResponse)
+	result, err := provider.Transform(inputData)
+
+	require.NoError(t, err, "transform should not fail")
+
+	var anthropicResponse map[string]interface{}
+	err = json.Unmarshal(result, &anthropicResponse)
+	require.NoError(t, err, "should be able to parse result")
+
+	// Check content contains tool_use
+	content, ok := anthropicResponse["content"].([]interface{})
+	require.True(t, ok, "content should be an array")
+	require.NotEmpty(t, content, "content should not be empty")
+
+	toolUse, ok := content[0].(map[string]interface{})
+	require.True(t, ok, "first content should be a map")
+	assert.Equal(t, "tool_use", toolUse["type"], "content type should be tool_use")
+	assert.Equal(t, "toolu_abc123", toolUse["id"], "tool ID should be converted")
+	assert.Equal(t, "get_weather", toolUse["name"], "tool name should match")
+
+	input, ok := toolUse["input"].(map[string]interface{})
+	require.True(t, ok, "input should be a map")
+	assert.Equal(t, "San Francisco", input["location"], "location parameter should match")
+	assert.Equal(t, "celsius", input["unit"], "unit parameter should match")
+
+	// Check stop reason
+	if stopReasonPtr, ok := anthropicResponse["stop_reason"].(*string); ok {
+		assert.Equal(t, "tool_use", *stopReasonPtr, "stop_reason should be tool_use")
+	} else if stopReasonStr, ok := anthropicResponse["stop_reason"].(string); ok {
+		assert.Equal(t, "tool_use", stopReasonStr, "stop_reason should be tool_use")
+	} else {
+		t.Fatalf("stop_reason has unexpected type: %T", anthropicResponse["stop_reason"])
+	}
+}
+
+func TestOpenRouterProvider_WebSearchAnnotations(t *testing.T) {
+	provider := NewOpenRouterProvider()
+
+	// Test OpenRouter response with web search annotations
+	openRouterResponse := map[string]interface{}{
+		"id":    "chatcmpl-123",
+		"model": "anthropic/claude-3.5-sonnet:online",
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": "Based on my search, here's what I found about the weather.",
+					"annotations": []interface{}{
+						map[string]interface{}{
+							"type":  "web_search",
+							"query": "current weather San Francisco",
+							"results": []interface{}{
+								map[string]interface{}{
+									"title": "Weather in San Francisco",
+									"url":   "https://weather.com/sf",
+								},
+							},
+						},
+					},
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     30,
+			"completion_tokens": 15,
+			"server_tool_use": map[string]interface{}{
+				"web_search_requests": 1,
+			},
+		},
+	}
+
+	inputData, _ := json.Marshal(openRouterResponse)
+	result, err := provider.Transform(inputData)
+
+	require.NoError(t, err, "transform should not fail")
+
+	var anthropicResponse map[string]interface{}
+	err = json.Unmarshal(result, &anthropicResponse)
+	require.NoError(t, err, "should be able to parse result")
+
+	// Check annotations are preserved
+	annotations, ok := anthropicResponse["annotations"].([]interface{})
+	require.True(t, ok, "annotations should be preserved")
+	require.NotEmpty(t, annotations, "annotations should not be empty")
+
+	annotation, ok := annotations[0].(map[string]interface{})
+	require.True(t, ok, "annotation should be a map")
+	assert.Equal(t, "web_search", annotation["type"], "annotation type should match")
+
+	// Check usage includes server tool use
+	usage, ok := anthropicResponse["usage"].(map[string]interface{})
+	require.True(t, ok, "usage should exist")
+
+	serverToolUse, ok := usage["server_tool_use"].(map[string]interface{})
+	require.True(t, ok, "server_tool_use should be preserved")
+	assert.Equal(t, float64(1), serverToolUse["web_search_requests"], "web_search_requests should match")
+}
+
+func TestOpenRouterProvider_StreamingToolCalls(t *testing.T) {
+	provider := NewOpenRouterProvider()
+	state := &StreamState{}
+
+	// Test first chunk with tool call start
+	chunk1 := map[string]interface{}{
+		"id":    "chatcmpl-123",
+		"model": "anthropic/claude-3.5-sonnet",
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"delta": map[string]interface{}{
+					"tool_calls": []interface{}{
+						map[string]interface{}{
+							"id":   "call_abc123",
+							"type": "function",
+							"function": map[string]interface{}{
+								"name":      "ls",
+								"arguments": "",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	chunkData1, _ := json.Marshal(chunk1)
+	result1, err := provider.TransformStream(chunkData1, state)
+	require.NoError(t, err, "first chunk should not fail")
+
+	// Test second chunk with tool arguments
+	chunk2 := map[string]interface{}{
+		"id":    "chatcmpl-123",
+		"model": "anthropic/claude-3.5-sonnet",
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"delta": map[string]interface{}{
+					"tool_calls": []interface{}{
+						map[string]interface{}{
+							"id":   "call_abc123",
+							"type": "function",
+							"function": map[string]interface{}{
+								"name":      "ls",
+								"arguments": "{\"path\":\"/home\"}",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	chunkData2, _ := json.Marshal(chunk2)
+	result2, err := provider.TransformStream(chunkData2, state)
+	require.NoError(t, err, "second chunk should not fail")
+
+	// Verify result contains proper SSE events
+	resultStr1 := string(result1)
+	resultStr2 := string(result2)
+	combinedResult := resultStr1 + resultStr2
+
+	assert.Contains(t, combinedResult, "event: message_start", "should contain message_start event")
+	assert.Contains(t, combinedResult, "event: content_block_start", "should contain content_block_start event")
+	assert.Contains(t, combinedResult, "\"type\":\"tool_use\"", "should contain tool_use type")
+	assert.Contains(t, combinedResult, "\"id\":\"toolu_abc123\"", "should convert tool call ID")
+	assert.Contains(t, combinedResult, "\"name\":\"ls\"", "should contain tool name")
+	assert.Contains(t, combinedResult, "input_json_delta", "should contain input_json_delta")
+
+	// Ensure no duplicate content_block_start events
+	startEventCount := strings.Count(combinedResult, "content_block_start")
+	assert.Equal(t, 2, startEventCount, "should have exactly 2 content_block_start events (message_start + tool_use)")
 }

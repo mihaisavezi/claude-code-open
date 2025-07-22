@@ -76,7 +76,7 @@ func TestProxyIntegration(t *testing.T) {
 	// The request should fail with a network error, but that means our handler logic worked
 	// We're testing the request processing pipeline, not the actual network call
 	assert.NotEqual(t, http.StatusInternalServerError, rr.Code, "should not have internal server error during request processing")
-	
+
 	// Log what we got for debugging
 	t.Logf("Response status: %d", rr.Code)
 	t.Logf("Response body: %s", rr.Body.String())

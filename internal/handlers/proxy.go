@@ -61,6 +61,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		finalBody = transformedBody
 	}
 
+	// Debug: Log request being sent to provider (truncated for readability)
+	if len(finalBody) > 500 {
+		h.logger.Debug("Sending request to provider", "provider", provider.Name(), "body_preview", string(finalBody[:500])+"...")
+	} else {
+		h.logger.Debug("Sending request to provider", "provider", provider.Name(), "body", string(finalBody))
+	}
+
 	// Create upstream request
 	req, err := http.NewRequest(r.Method, providerConfig.APIBase, strings.NewReader(string(finalBody)))
 	if err != nil {
@@ -154,17 +161,22 @@ func (h *ProxyHandler) handleStreamingResponse(w http.ResponseWriter, resp *http
 
 		// Process data lines
 		if strings.HasPrefix(line, "data: ") {
-			jsonData := strings.TrimPrefix(line, "data: ")
-
-			// Transform chunk through provider
-			events, err := provider.TransformStream([]byte(jsonData), state)
-			if err != nil {
-				h.logger.Error("Stream transformation error", "error", err)
-				// Send original chunk on error
+			// For error responses, forward data as-is without transformation
+			if captureError {
 				fmt.Fprintf(w, "%s\n\n", line)
 			} else {
-				if len(events) > 0 {
-					w.Write(events)
+				jsonData := strings.TrimPrefix(line, "data: ")
+
+				// Transform chunk through provider for successful responses
+				events, err := provider.TransformStream([]byte(jsonData), state)
+				if err != nil {
+					h.logger.Error("Stream transformation error", "error", err)
+					// Send original chunk on error
+					fmt.Fprintf(w, "%s\n\n", line)
+				} else {
+					if len(events) > 0 {
+						w.Write(events)
+					}
 				}
 			}
 
@@ -209,25 +221,30 @@ func (h *ProxyHandler) handleResponse(w http.ResponseWriter, resp *http.Response
 		return
 	}
 
-	// Transform response
-	transformedBody, err := provider.Transform(respBody)
-	if err != nil {
-		h.logger.Warn("Response transformation failed, using original", "error", err)
-		transformedBody = respBody
-	}
+	var finalBody []byte
 
-	// Print response body on upstream errors
+	// For error responses, forward original response without transformation
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("\nUpstream error response body:\n%s\n", string(respBody))
+		finalBody = respBody
+	} else {
+		// Transform successful responses
+		transformedBody, err := provider.Transform(respBody)
+		if err != nil {
+			h.logger.Warn("Response transformation failed, using original", "error", err)
+			finalBody = respBody
+		} else {
+			finalBody = transformedBody
+		}
 	}
 
 	// Copy headers and send response
 	h.copyHeaders(w, resp)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
-	w.Write(transformedBody)
+	w.Write(finalBody)
 
-	h.logResponseTokens(transformedBody, resp.StatusCode, inputTokens)
+	h.logResponseTokens(finalBody, resp.StatusCode, inputTokens)
 }
 
 func (h *ProxyHandler) findProvider(modelName string, cfg *config.Config) (providers.Provider, *config.Provider, error) {
@@ -271,26 +288,42 @@ func (h *ProxyHandler) selectModel(inputBody []byte, tokens int, routerConfig *c
 
 	// Model selection logic
 	var selectedModel string
-	if tokens > 60000 && routerConfig.LongContext != "" {
-		selectedModel = routerConfig.LongContext
-	} else if model, ok := modelBody["model"].(string); ok && strings.HasPrefix(model, "claude-3-5-haiku") && routerConfig.Background != "" {
-		selectedModel = routerConfig.Background
-	} else if routerConfig.Think != "" {
-		selectedModel = routerConfig.Think
-	} else if routerConfig.WebSearch != "" {
-		selectedModel = routerConfig.WebSearch
-	} else if model, ok := modelBody["model"].(string); ok && len(model) > 0 {
-		selectedModel = model
+
+	// Check if user provided explicit model in request
+	if model, ok := modelBody["model"].(string); ok && len(model) > 0 {
+		// If model contains comma (provider,model format), use it directly
+		if strings.Contains(model, ",") {
+			selectedModel = model
+		} else {
+			// Apply automatic routing logic for non-explicit provider requests
+			if tokens > 60000 && routerConfig.LongContext != "" {
+				selectedModel = routerConfig.LongContext
+			} else if strings.HasPrefix(model, "claude-3-5-haiku") && routerConfig.Background != "" {
+				selectedModel = routerConfig.Background
+			} else if routerConfig.Think != "" {
+				selectedModel = routerConfig.Think
+			} else if routerConfig.WebSearch != "" {
+				selectedModel = routerConfig.WebSearch
+			} else {
+				selectedModel = model
+			}
+		}
 	} else {
+		// No model specified, use default
 		selectedModel = routerConfig.Default
 	}
 
 	// Update model in request body
+	var finalModel string
 	if parts := strings.SplitN(selectedModel, ",", 2); len(parts) > 1 {
-		modelBody["model"] = parts[1]
+		finalModel = parts[1]
 	} else {
-		modelBody["model"] = selectedModel
+		finalModel = selectedModel
 	}
+
+	// Handle :online suffix for web search (preserve it for OpenRouter)
+	// OpenRouter expects model:online format, so we keep it as-is
+	modelBody["model"] = finalModel
 
 	updatedBody, err := json.Marshal(modelBody)
 	if err != nil {
@@ -369,6 +402,16 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
 	}
 
+	// Debug: log tool information
+	if _, hasTools := request["tools"]; hasTools {
+		if tools, ok := request["tools"].([]interface{}); ok {
+			h.logger.Debug("Request has tools", "count", len(tools))
+		}
+	}
+	if _, hasToolChoice := request["tool_choice"]; hasToolChoice {
+		h.logger.Debug("Request has tool_choice", "value", request["tool_choice"])
+	}
+
 	// Remove Anthropic-specific fields that OpenAI doesn't support
 	cleanedRequest := h.removeAnthropicSpecificFields(request)
 
@@ -377,12 +420,44 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 		cleanedRequest["messages"] = h.transformMessages(messages)
 	}
 
+	// Transform tools from Claude format to OpenAI/OpenRouter format if present
+	if tools, ok := cleanedRequest["tools"].([]interface{}); ok {
+		transformedTools, err := h.transformTools(tools)
+		if err != nil {
+			h.logger.Warn("Failed to transform tools", "error", err)
+			// Keep original tools on error
+		} else {
+			cleanedRequest["tools"] = transformedTools
+			h.logger.Debug("Transformed tools", "original_count", len(tools), "transformed_count", len(transformedTools))
+		}
+	}
+
 	return json.Marshal(cleanedRequest)
 }
 
 func (h *ProxyHandler) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
+	// Remove Claude/Anthropic-specific fields that OpenAI/OpenRouter don't support
 	fieldsToRemove := []string{"cache_control"}
-	return h.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
+	cleaned := h.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
+
+	// Handle tool_choice logic: only remove if no tools are present, tools is null, or tools is empty array
+	if tools, hasTools := cleaned["tools"]; !hasTools || tools == nil {
+		if _, hasToolChoice := cleaned["tool_choice"]; hasToolChoice {
+			h.logger.Debug("Removed tool_choice: no tools field or tools is null")
+		}
+		delete(cleaned, "tool_choice")
+	} else if toolsArray, ok := tools.([]interface{}); ok && len(toolsArray) == 0 {
+		if _, hasToolChoice := cleaned["tool_choice"]; hasToolChoice {
+			h.logger.Debug("Removed tool_choice: tools array is empty")
+		}
+		delete(cleaned, "tool_choice")
+	} else {
+		if _, hasToolChoice := cleaned["tool_choice"]; hasToolChoice {
+			h.logger.Debug("Keeping tool_choice: tools array has content", "tools_count", len(tools.([]interface{})))
+		}
+	}
+
+	return cleaned
 }
 
 func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove []string) interface{} {
@@ -411,6 +486,54 @@ func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove 
 	default:
 		return v
 	}
+}
+
+func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error) {
+	transformedTools := make([]interface{}, 0, len(tools))
+	
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]interface{})
+		if !ok {
+			continue // Skip malformed tools
+		}
+		
+		// Check if this is already in OpenAI format (has "type": "function" and "function" field)
+		if toolType, hasType := toolMap["type"].(string); hasType && toolType == "function" {
+			if _, hasFunction := toolMap["function"]; hasFunction {
+				// Already in OpenAI format, keep as-is
+				transformedTools = append(transformedTools, tool)
+				continue
+			}
+		}
+		
+		// Transform from Claude format to OpenAI format
+		// Claude tools might have: name, description, input_schema
+		// OpenAI tools need: type: "function", function: {name, description, parameters}
+		if name, hasName := toolMap["name"].(string); hasName {
+			openAITool := map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name": name,
+				},
+			}
+			
+			function := openAITool["function"].(map[string]interface{})
+			
+			// Add description if present
+			if description, hasDesc := toolMap["description"].(string); hasDesc {
+				function["description"] = description
+			}
+			
+			// Transform input_schema to parameters
+			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
+				function["parameters"] = inputSchema
+			}
+			
+			transformedTools = append(transformedTools, openAITool)
+		}
+	}
+	
+	return transformedTools, nil
 }
 
 func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {

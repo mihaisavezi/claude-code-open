@@ -49,9 +49,9 @@ func TestConfig_LoadAndSave(t *testing.T) {
 	assert.Equal(t, cfg.Host, loadedCfg.Host, "host should match")
 	assert.Equal(t, cfg.Port, loadedCfg.Port, "port should match")
 	assert.Equal(t, cfg.APIKey, loadedCfg.APIKey, "API key should match")
-	
+
 	require.Len(t, loadedCfg.Providers, 1, "should have 1 provider")
-	
+
 	provider := loadedCfg.Providers[0]
 	assert.Equal(t, "openrouter", provider.Name, "provider name should match")
 	assert.Equal(t, "https://openrouter.ai/api/v1/chat/completions", provider.APIBase, "API base should match")
@@ -80,7 +80,7 @@ func TestConfig_Defaults(t *testing.T) {
 	// Save and load
 	err := manager.Save(cfg)
 	require.NoError(t, err)
-	
+
 	loadedCfg, err := manager.Load()
 	require.NoError(t, err, "should be able to load config")
 

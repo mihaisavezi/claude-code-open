@@ -31,18 +31,18 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	// Set up environment variables for Claude Code
 	env := os.Environ()
-	
+
 	// Remove any existing Anthropic auth tokens
 	env = filterEnv(env, "ANTHROPIC_AUTH_TOKEN")
 	env = filterEnv(env, "ANTHROPIC_API_KEY")
-	
+
 	// Set router as the API endpoint
 	if cfg.APIKey != "" {
 		env = append(env, "ANTHROPIC_API_KEY="+cfg.APIKey)
 	} else {
 		env = append(env, "ANTHROPIC_AUTH_TOKEN=proxy")
 	}
-	
+
 	env = append(env, "ANTHROPIC_BASE_URL=http://"+cfg.Host+":"+strconv.Itoa(cfg.Port))
 	env = append(env, "API_TIMEOUT_MS=600000")
 

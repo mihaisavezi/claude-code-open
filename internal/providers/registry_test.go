@@ -62,7 +62,7 @@ func TestRegistry_List(t *testing.T) {
 	registry.Initialize()
 
 	providers := registry.List()
-	
+
 	expectedProviders := []string{"openrouter", "openai", "anthropic"}
 	assert.Len(t, providers, len(expectedProviders), "should have expected number of providers")
 

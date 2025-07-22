@@ -28,11 +28,11 @@ func NewManager(baseDir string) *Manager {
 func (m *Manager) WritePID() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if err := os.MkdirAll(filepath.Dir(m.pidFile), 0755); err != nil {
 		return fmt.Errorf("create pid directory: %w", err)
 	}
-	
+
 	pid := strconv.Itoa(os.Getpid())
 	return os.WriteFile(m.pidFile, []byte(pid), 0644)
 }
@@ -40,12 +40,12 @@ func (m *Manager) WritePID() error {
 func (m *Manager) ReadPID() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	data, err := os.ReadFile(m.pidFile)
 	if err != nil {
 		return 0
 	}
-	
+
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 	return pid
 }
@@ -55,12 +55,12 @@ func (m *Manager) IsRunning() bool {
 	if pid == 0 {
 		return false
 	}
-	
+
 	if err := syscall.Kill(pid, 0); err != nil {
 		m.CleanupPID()
 		return false
 	}
-	
+
 	return true
 }
 
@@ -69,11 +69,11 @@ func (m *Manager) Stop() error {
 	if pid == 0 {
 		return nil
 	}
-	
+
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return fmt.Errorf("failed to send SIGTERM to process %d: %w", pid, err)
 	}
-	
+
 	// Wait for process to exit
 	for i := 0; i < 50; i++ { // 5 seconds timeout
 		if !m.IsRunning() {
@@ -81,7 +81,7 @@ func (m *Manager) Stop() error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	
+
 	m.CleanupPID()
 	return nil
 }
@@ -105,12 +105,12 @@ func (m *Manager) DecrementRef() {
 func (m *Manager) ReadRef() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	data, err := os.ReadFile(m.refFile)
 	if err != nil {
 		return 0
 	}
-	
+
 	count, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 	return count
 }
@@ -131,14 +131,14 @@ func (m *Manager) WaitForService(timeout time.Duration) bool {
 	expire := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	for time.Now().Before(expire) {
 		if m.IsRunning() {
 			return true
 		}
 		<-ticker.C
 	}
-	
+
 	return false
 }
 
@@ -146,17 +146,17 @@ func (m *Manager) StartServiceIfNeeded() (bool, error) {
 	if m.IsRunning() {
 		return false, nil // Service was already running
 	}
-	
+
 	// Start service in background
 	cmd := exec.Command(os.Args[0], "start")
 	if err := cmd.Start(); err != nil {
 		return false, fmt.Errorf("failed to start service: %w", err)
 	}
-	
+
 	// Wait for service to be ready
 	if !m.WaitForService(10 * time.Second) {
 		return false, fmt.Errorf("service startup timeout")
 	}
-	
+
 	return true, nil // Service was started by us
 }

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/Davincible/claude-code-router-go/internal/config"
-	"github.com/Davincible/claude-code-router-go/internal/providers"
-	"github.com/Davincible/claude-code-router-go/internal/middleware"
 	"github.com/Davincible/claude-code-router-go/internal/handlers"
+	"github.com/Davincible/claude-code-router-go/internal/middleware"
+	"github.com/Davincible/claude-code-router-go/internal/providers"
 )
 
 type Server struct {
@@ -41,10 +41,10 @@ func (s *Server) Start() error {
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	
+
 	// Setup routes
 	mux := s.setupRoutes()
-	
+
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: mux,

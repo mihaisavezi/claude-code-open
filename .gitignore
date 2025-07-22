@@ -47,6 +47,7 @@ config.json
 
 # Temporary directories
 tmp/
+.tmp/
 temp/
 
 # Air hot reload

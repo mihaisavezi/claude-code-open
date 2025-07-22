@@ -36,7 +36,7 @@ func (am *AuthMiddleware) middleware(next http.Handler) http.Handler {
 
 func (am *AuthMiddleware) authenticate(r *http.Request) error {
 	cfg := am.config.Get()
-	
+
 	// Skip auth for health checks or if no API key is configured
 	if r.URL.Path == "/health" || cfg.APIKey == "" {
 		return nil
