@@ -704,3 +704,669 @@ func TestHandleStreamingResponse_ErrorForwarding(t *testing.T) {
 	assert.Contains(t, responseBody, "invalid_request_error", "error response should be forwarded as-is")
 	assert.Contains(t, responseBody, "Invalid model specified", "error message should be preserved")
 }
+
+func TestTransformAnthropicToOpenAI_ToolChoiceValidationAfterTransformation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := &ProxyHandler{logger: logger}
+
+	t.Run("removes tool_choice when tool transformation fails", func(t *testing.T) {
+		// Create malformed tool that will cause transformation to fail
+		anthropicRequest := map[string]interface{}{
+			"model":       "claude-3-5-sonnet",
+			"max_tokens":  1000,
+			"tool_choice": "auto",
+			"tools": []interface{}{
+				map[string]interface{}{
+					// Missing required fields to cause transformation failure
+					"invalid_tool": "malformed",
+				},
+			},
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":    "user",
+					"content": "Test message",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(anthropicRequest)
+		result, err := handler.transformAnthropicToOpenAI(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		// tool_choice should be removed due to tool transformation failure
+		_, hasToolChoice := transformed["tool_choice"]
+		assert.False(t, hasToolChoice, "tool_choice should be removed when tool transformation fails")
+	})
+
+	t.Run("removes tool_choice when transformed tools array is empty", func(t *testing.T) {
+		// Create handler with custom transformTools that returns empty array
+		handler := &ProxyHandler{
+			logger: logger,
+		}
+
+		anthropicRequest := map[string]interface{}{
+			"model":       "claude-3-5-sonnet",
+			"max_tokens":  1000,
+			"tool_choice": "auto",
+			"tools":       []interface{}{}, // Empty tools array
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":    "user",
+					"content": "Test message",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(anthropicRequest)
+		result, err := handler.transformAnthropicToOpenAI(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		// tool_choice should be removed due to empty tools array
+		_, hasToolChoice := transformed["tool_choice"]
+		assert.False(t, hasToolChoice, "tool_choice should be removed when tools array is empty")
+	})
+
+	t.Run("keeps tool_choice when tools transform successfully", func(t *testing.T) {
+		anthropicRequest := map[string]interface{}{
+			"model":       "claude-3-5-sonnet",
+			"max_tokens":  1000,
+			"tool_choice": "auto",
+			"tools": []interface{}{
+				map[string]interface{}{
+					"name":        "get_weather",
+					"description": "Get current weather",
+					"input_schema": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"location": map[string]interface{}{
+								"type":        "string",
+								"description": "City name",
+							},
+						},
+						"required": []string{"location"},
+					},
+				},
+			},
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":    "user",
+					"content": "What's the weather in NYC?",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(anthropicRequest)
+		result, err := handler.transformAnthropicToOpenAI(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		// tool_choice should be kept when tools transform successfully
+		toolChoice, hasToolChoice := transformed["tool_choice"]
+		assert.True(t, hasToolChoice, "tool_choice should be kept when tools transform successfully")
+		assert.Equal(t, "auto", toolChoice, "tool_choice value should be preserved")
+
+		// Verify tools were transformed to OpenAI format
+		tools, hasTools := transformed["tools"]
+		assert.True(t, hasTools, "tools should be present")
+		toolsArray := tools.([]interface{})
+		assert.Len(t, toolsArray, 1, "should have one transformed tool")
+
+		tool := toolsArray[0].(map[string]interface{})
+		assert.Equal(t, "function", tool["type"], "tool should have type 'function'")
+
+		function := tool["function"].(map[string]interface{})
+		assert.Equal(t, "get_weather", function["name"], "function name should be preserved")
+		assert.Equal(t, "Get current weather", function["description"], "function description should be preserved")
+
+		// Verify input_schema was converted to parameters
+		_, hasParameters := function["parameters"]
+		assert.True(t, hasParameters, "should have parameters instead of input_schema")
+		_, hasInputSchema := function["input_schema"]
+		assert.False(t, hasInputSchema, "should not have input_schema in OpenAI format")
+	})
+}
+
+func TestTransformMessages_ToolResultTransformation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := &ProxyHandler{logger: logger}
+
+	t.Run("transforms Claude tool_result to OpenAI tool message format", func(t *testing.T) {
+		messages := []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_12345",
+						"content":     "Weather result: 75°F, sunny",
+					},
+				},
+			},
+		}
+
+		transformed := handler.transformMessages(messages)
+
+		// Should transform to single tool message
+		assert.Len(t, transformed, 1, "should have one transformed message")
+
+		toolMsg := transformed[0].(map[string]interface{})
+		assert.Equal(t, "tool", toolMsg["role"], "should be tool role")
+		assert.Equal(t, "call_12345", toolMsg["tool_call_id"], "should convert tool_use_id to tool_call_id")
+		assert.Equal(t, "Weather result: 75°F, sunny", toolMsg["content"], "should preserve content")
+		
+		// Ensure no toolu_ remains in the tool_call_id
+		assert.NotContains(t, toolMsg["tool_call_id"], "toolu_", "tool_call_id should not contain toolu_ prefix")
+	})
+
+	t.Run("handles malformed tool_use_id gracefully", func(t *testing.T) {
+		messages := []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "call_toolu_vrtx_01Cg2DgMwQBjmQNSWXvJpJfJ", // Malformed ID like in the error
+						"content":     "Tool result",
+					},
+				},
+			},
+		}
+
+		transformed := handler.transformMessages(messages)
+
+		assert.Len(t, transformed, 1)
+		toolMsg := transformed[0].(map[string]interface{})
+		assert.Equal(t, "tool", toolMsg["role"])
+		
+		// Should keep the already-formatted ID as-is
+		assert.Equal(t, "call_toolu_vrtx_01Cg2DgMwQBjmQNSWXvJpJfJ", toolMsg["tool_call_id"], "should preserve already-formatted call_ ID")
+	})
+
+	t.Run("handles various tool_use_id formats", func(t *testing.T) {
+		testCases := []struct {
+			inputID  string
+			expected string
+		}{
+			{"toolu_12345", "call_12345"},
+			{"call_12345", "call_12345"}, // Already formatted
+			{"call_toolu_12345", "call_toolu_12345"}, // Malformed but preserved
+			{"some_other_format", "call_some_other_format"},
+		}
+
+		for _, tc := range testCases {
+			messages := []interface{}{
+				map[string]interface{}{
+					"role": "user",
+					"content": []interface{}{
+						map[string]interface{}{
+							"type":        "tool_result",
+							"tool_use_id": tc.inputID,
+							"content":     "Test result",
+						},
+					},
+				},
+			}
+
+			transformed := handler.transformMessages(messages)
+			toolMsg := transformed[0].(map[string]interface{})
+			assert.Equal(t, tc.expected, toolMsg["tool_call_id"], 
+				"Failed for input ID: %s", tc.inputID)
+		}
+	})
+
+	t.Run("transforms multiple tool results in one message", func(t *testing.T) {
+		messages := []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_12345",
+						"content":     "Weather: 75°F",
+					},
+					map[string]interface{}{
+						"type":        "tool_result", 
+						"tool_use_id": "toolu_67890",
+						"content":     "Time: 3:30 PM",
+					},
+				},
+			},
+		}
+
+		transformed := handler.transformMessages(messages)
+
+		// Should create two separate tool messages
+		assert.Len(t, transformed, 2, "should have two tool messages")
+
+		toolMsg1 := transformed[0].(map[string]interface{})
+		assert.Equal(t, "tool", toolMsg1["role"])
+		assert.Equal(t, "call_12345", toolMsg1["tool_call_id"])
+		assert.Equal(t, "Weather: 75°F", toolMsg1["content"])
+
+		toolMsg2 := transformed[1].(map[string]interface{})
+		assert.Equal(t, "tool", toolMsg2["role"])
+		assert.Equal(t, "call_67890", toolMsg2["tool_call_id"])
+		assert.Equal(t, "Time: 3:30 PM", toolMsg2["content"])
+	})
+
+	t.Run("handles mixed content with tool results and text", func(t *testing.T) {
+		messages := []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_12345",
+						"content":     "Tool output",
+					},
+					map[string]interface{}{
+						"type": "text",
+						"text": "Additional user message",
+					},
+				},
+			},
+		}
+
+		transformed := handler.transformMessages(messages)
+
+		// Should create tool message plus user message
+		assert.Len(t, transformed, 2, "should have tool message and user message")
+
+		toolMsg := transformed[0].(map[string]interface{})
+		assert.Equal(t, "tool", toolMsg["role"])
+		assert.Equal(t, "call_12345", toolMsg["tool_call_id"])
+
+		userMsg := transformed[1].(map[string]interface{})
+		assert.Equal(t, "user", userMsg["role"])
+		content := userMsg["content"].([]interface{})
+		assert.Len(t, content, 1)
+		textBlock := content[0].(map[string]interface{})
+		assert.Equal(t, "text", textBlock["type"])
+		assert.Equal(t, "Additional user message", textBlock["text"])
+	})
+
+	t.Run("handles complex tool result content", func(t *testing.T) {
+		messages := []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":        "tool_result",
+						"tool_use_id": "toolu_12345",
+						"content": []interface{}{
+							map[string]interface{}{
+								"type": "text",
+								"text": "First part",
+							},
+							map[string]interface{}{
+								"type": "text", 
+								"text": "Second part",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		transformed := handler.transformMessages(messages)
+
+		assert.Len(t, transformed, 1)
+		toolMsg := transformed[0].(map[string]interface{})
+		assert.Equal(t, "tool", toolMsg["role"])
+		assert.Equal(t, "First part\nSecond part", toolMsg["content"], "should join text parts")
+	})
+
+	t.Run("passes through regular messages unchanged", func(t *testing.T) {
+		messages := []interface{}{
+			map[string]interface{}{
+				"role": "user",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type": "text",
+						"text": "Regular user message",
+					},
+				},
+			},
+			map[string]interface{}{
+				"role":    "assistant", 
+				"content": "Assistant response",
+			},
+		}
+
+		transformed := handler.transformMessages(messages)
+
+		assert.Len(t, transformed, 2, "should preserve all regular messages")
+		
+		userMsg := transformed[0].(map[string]interface{})
+		assert.Equal(t, "user", userMsg["role"])
+		
+		assistantMsg := transformed[1].(map[string]interface{})
+		assert.Equal(t, "assistant", assistantMsg["role"])
+		assert.Equal(t, "Assistant response", assistantMsg["content"])
+	})
+}
+
+func TestTransformOpenAIToAnthropic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := &ProxyHandler{logger: logger}
+
+	t.Run("transforms OpenAI tool messages to Claude tool_result format", func(t *testing.T) {
+		openAIRequest := map[string]interface{}{
+			"model":      "claude-3-5-sonnet",
+			"max_tokens": 1000,
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":    "user",
+					"content": "What's the weather?",
+				},
+				map[string]interface{}{
+					"role":    "assistant",
+					"content": "I'll check the weather for you.",
+				},
+				map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": "call_12345",
+					"content":      "75°F, sunny",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(openAIRequest)
+		result, err := handler.transformOpenAIToAnthropic(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		messages := transformed["messages"].([]interface{})
+		assert.Len(t, messages, 3, "should have 3 messages")
+
+		// First two messages should be unchanged
+		assert.Equal(t, "user", messages[0].(map[string]interface{})["role"])
+		assert.Equal(t, "assistant", messages[1].(map[string]interface{})["role"])
+
+		// Tool message should be converted to user message with tool_result
+		userMsg := messages[2].(map[string]interface{})
+		assert.Equal(t, "user", userMsg["role"])
+
+		content := userMsg["content"].([]interface{})
+		assert.Len(t, content, 1)
+
+		toolResult := content[0].(map[string]interface{})
+		assert.Equal(t, "tool_result", toolResult["type"])
+		assert.Equal(t, "toolu_12345", toolResult["tool_use_id"])
+		assert.Equal(t, "75°F, sunny", toolResult["content"])
+	})
+
+	t.Run("handles multiple tool messages", func(t *testing.T) {
+		openAIRequest := map[string]interface{}{
+			"model":      "claude-3-5-sonnet",
+			"max_tokens": 1000,
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": "call_12345",
+					"content":      "Weather: 75°F",
+				},
+				map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": "call_67890",
+					"content":      "Time: 3:30 PM",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(openAIRequest)
+		result, err := handler.transformOpenAIToAnthropic(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		messages := transformed["messages"].([]interface{})
+		assert.Len(t, messages, 1, "should combine tool messages into one user message")
+
+		userMsg := messages[0].(map[string]interface{})
+		assert.Equal(t, "user", userMsg["role"])
+
+		content := userMsg["content"].([]interface{})
+		assert.Len(t, content, 2, "should have two tool results")
+
+		result1 := content[0].(map[string]interface{})
+		assert.Equal(t, "tool_result", result1["type"])
+		assert.Equal(t, "toolu_12345", result1["tool_use_id"])
+		assert.Equal(t, "Weather: 75°F", result1["content"])
+
+		result2 := content[1].(map[string]interface{})
+		assert.Equal(t, "tool_result", result2["type"])
+		assert.Equal(t, "toolu_67890", result2["tool_use_id"])
+		assert.Equal(t, "Time: 3:30 PM", result2["content"])
+	})
+
+	t.Run("transforms OpenAI tools to Claude format", func(t *testing.T) {
+		openAIRequest := map[string]interface{}{
+			"model":      "claude-3-5-sonnet",
+			"max_tokens": 1000,
+			"tools": []interface{}{
+				map[string]interface{}{
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":        "get_weather",
+						"description": "Get current weather",
+						"parameters": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"location": map[string]interface{}{
+									"type":        "string",
+									"description": "City name",
+								},
+							},
+							"required": []string{"location"},
+						},
+					},
+				},
+			},
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":    "user",
+					"content": "What's the weather?",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(openAIRequest)
+		result, err := handler.transformOpenAIToAnthropic(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		tools := transformed["tools"].([]interface{})
+		assert.Len(t, tools, 1)
+
+		tool := tools[0].(map[string]interface{})
+		assert.Equal(t, "get_weather", tool["name"])
+		assert.Equal(t, "Get current weather", tool["description"])
+
+		// Should have input_schema instead of parameters
+		_, hasInputSchema := tool["input_schema"]
+		assert.True(t, hasInputSchema, "should have input_schema")
+		_, hasParameters := tool["parameters"]
+		assert.False(t, hasParameters, "should not have parameters field")
+	})
+
+	t.Run("handles malformed tool_call_id correctly", func(t *testing.T) {
+		openAIRequest := map[string]interface{}{
+			"model":      "claude-3-5-sonnet",
+			"max_tokens": 1000,
+			"messages": []interface{}{
+				map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": "call_toolu_vrtx_01Cg2DgMwQBjmQNSWXvJpJfJ", // Malformed like in the error
+					"content":      "Tool result",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(openAIRequest)
+		result, err := handler.transformOpenAIToAnthropic(requestBytes)
+		assert.NoError(t, err)
+
+		var transformed map[string]interface{}
+		err = json.Unmarshal(result, &transformed)
+		assert.NoError(t, err)
+
+		messages := transformed["messages"].([]interface{})
+		userMsg := messages[0].(map[string]interface{})
+		content := userMsg["content"].([]interface{})
+		toolResult := content[0].(map[string]interface{})
+
+		// Should convert to proper Claude format
+		assert.Equal(t, "toolu_toolu_vrtx_01Cg2DgMwQBjmQNSWXvJpJfJ", toolResult["tool_use_id"])
+	})
+}
+
+func TestTransformAssistantMessage_ToolUse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := &ProxyHandler{logger: logger}
+
+	// Test Claude assistant message with tool_use
+	claudeAssistantMsg := map[string]interface{}{
+		"role": "assistant",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": "I'll check the current directory for you.",
+			},
+			map[string]interface{}{
+				"type": "tool_use",
+				"id":   "toolu_vrtx_01QDQTnz2yrXxP3GkGNXF5yy",
+				"name": "LS",
+				"input": map[string]interface{}{
+					"path": "/home/user",
+				},
+			},
+		},
+	}
+
+	content := claudeAssistantMsg["content"].([]interface{})
+	result := handler.transformAssistantMessage(claudeAssistantMsg, content, 0)
+	
+	require.NotNil(t, result, "Should transform assistant message with tool_use")
+	
+	// Verify basic structure
+	assert.Equal(t, "assistant", result["role"])
+	assert.Equal(t, "I'll check the current directory for you.", result["content"])
+	
+	// Verify tool_calls transformation
+	toolCalls, ok := result["tool_calls"].([]interface{})
+	require.True(t, ok, "Should have tool_calls array")
+	require.Len(t, toolCalls, 1, "Should have one tool call")
+	
+	toolCall := toolCalls[0].(map[string]interface{})
+	assert.Equal(t, "call_vrtx_01QDQTnz2yrXxP3GkGNXF5yy", toolCall["id"], "Should convert toolu_ to call_")
+	assert.Equal(t, "function", toolCall["type"])
+	
+	function := toolCall["function"].(map[string]interface{})
+	assert.Equal(t, "LS", function["name"])
+	assert.Equal(t, `{"path":"/home/user"}`, function["arguments"])
+}
+
+func TestTransformAssistantMessage_NoToolUse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := &ProxyHandler{logger: logger}
+
+	// Test Claude assistant message without tool_use
+	claudeAssistantMsg := map[string]interface{}{
+		"role": "assistant",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": "Hello! How can I help you?",
+			},
+		},
+	}
+
+	content := claudeAssistantMsg["content"].([]interface{})
+	result := handler.transformAssistantMessage(claudeAssistantMsg, content, 0)
+	
+	assert.Nil(t, result, "Should not transform assistant message without tool_use")
+}
+
+func TestTransformMessages_AssistantWithToolUse(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+	handler := &ProxyHandler{logger: logger}
+
+	messages := []interface{}{
+		map[string]interface{}{
+			"role":    "user",
+			"content": "What files are in the current directory?",
+		},
+		map[string]interface{}{
+			"role": "assistant",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type": "text",
+					"text": "I'll check the files for you.",
+				},
+				map[string]interface{}{
+					"type": "tool_use",
+					"id":   "toolu_abc123",
+					"name": "LS",
+					"input": map[string]interface{}{
+						"path": ".",
+					},
+				},
+			},
+		},
+		map[string]interface{}{
+			"role": "user",
+			"content": []interface{}{
+				map[string]interface{}{
+					"type":        "tool_result",
+					"tool_use_id": "toolu_abc123",
+					"content":     "file1.txt\nfile2.txt",
+				},
+			},
+		},
+	}
+
+	result := handler.transformMessages(messages)
+
+	// Should have 3 messages: user, transformed assistant, transformed tool result
+	require.Len(t, result, 3, "Should have 3 messages after transformation")
+
+	// Check first message (unchanged)
+	userMsg := result[0].(map[string]interface{})
+	assert.Equal(t, "user", userMsg["role"])
+
+	// Check transformed assistant message
+	assistantMsg := result[1].(map[string]interface{})
+	assert.Equal(t, "assistant", assistantMsg["role"])
+	assert.Equal(t, "I'll check the files for you.", assistantMsg["content"])
+
+	toolCalls := assistantMsg["tool_calls"].([]interface{})
+	require.Len(t, toolCalls, 1)
+	toolCall := toolCalls[0].(map[string]interface{})
+	assert.Equal(t, "call_abc123", toolCall["id"])
+
+	// Check transformed tool result message
+	toolMsg := result[2].(map[string]interface{})
+	assert.Equal(t, "tool", toolMsg["role"])
+	assert.Equal(t, "call_abc123", toolMsg["tool_call_id"])
+	assert.Equal(t, "file1.txt\nfile2.txt", toolMsg["content"])
+}

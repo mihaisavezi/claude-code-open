@@ -390,7 +390,7 @@ func (h *ProxyHandler) transformRequestToProviderFormat(requestBody []byte, prov
 	case "openrouter", "openai":
 		return h.transformAnthropicToOpenAI(requestBody)
 	case "anthropic":
-		return requestBody, nil // No transformation needed
+		return h.transformOpenAIToAnthropic(requestBody)
 	default:
 		return requestBody, nil // Default: no transformation
 	}
@@ -402,15 +402,6 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
 	}
 
-	// Debug: log tool information
-	if _, hasTools := request["tools"]; hasTools {
-		if tools, ok := request["tools"].([]interface{}); ok {
-			h.logger.Debug("Request has tools", "count", len(tools))
-		}
-	}
-	if _, hasToolChoice := request["tool_choice"]; hasToolChoice {
-		h.logger.Debug("Request has tool_choice", "value", request["tool_choice"])
-	}
 
 	// Remove Anthropic-specific fields that OpenAI doesn't support
 	cleanedRequest := h.removeAnthropicSpecificFields(request)
@@ -425,14 +416,139 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 		transformedTools, err := h.transformTools(tools)
 		if err != nil {
 			h.logger.Warn("Failed to transform tools", "error", err)
-			// Keep original tools on error
+			// If tools transformation fails, remove tool_choice to prevent validation errors
+			if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
+				delete(cleanedRequest, "tool_choice")
+			}
 		} else {
 			cleanedRequest["tools"] = transformedTools
-			h.logger.Debug("Transformed tools", "original_count", len(tools), "transformed_count", len(transformedTools))
+			
+			// Re-validate tool_choice after successful transformation
+			// If transformed tools array is empty, remove tool_choice
+			if len(transformedTools) == 0 {
+				if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
+					delete(cleanedRequest, "tool_choice")
+				}
+			}
 		}
 	}
 
 	return json.Marshal(cleanedRequest)
+}
+
+func (h *ProxyHandler) transformOpenAIToAnthropic(openAIRequest []byte) ([]byte, error) {
+	var request map[string]interface{}
+	if err := json.Unmarshal(openAIRequest, &request); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal OpenAI request: %w", err)
+	}
+
+
+	// Transform messages from OpenAI format to Claude format
+	if messages, ok := request["messages"].([]interface{}); ok {
+		transformedMessages := h.transformOpenAIMessagesToClaude(messages)
+		request["messages"] = transformedMessages
+	}
+
+	// Transform tools from OpenAI format to Claude format
+	if tools, ok := request["tools"].([]interface{}); ok {
+		transformedTools := h.transformOpenAIToolsToClaude(tools)
+		request["tools"] = transformedTools
+	}
+
+	return json.Marshal(request)
+}
+
+func (h *ProxyHandler) transformOpenAIMessagesToClaude(messages []interface{}) []interface{} {
+	transformedMessages := make([]interface{}, 0, len(messages))
+
+	i := 0
+	for i < len(messages) {
+		if msgMap, ok := messages[i].(map[string]interface{}); ok {
+			role, _ := msgMap["role"].(string)
+			
+			if role == "tool" {
+				// Convert OpenAI tool message to Claude tool_result format
+				
+				// Collect all consecutive tool messages
+				var toolResults []interface{}
+				for i < len(messages) {
+					if toolMsg, ok := messages[i].(map[string]interface{}); ok {
+						if toolRole, _ := toolMsg["role"].(string); toolRole == "tool" {
+							toolCallID, _ := toolMsg["tool_call_id"].(string)
+							content := toolMsg["content"]
+							
+							// Convert call_ to toolu_ format
+							claudeToolID := "toolu_" + strings.TrimPrefix(toolCallID, "call_")
+							
+							toolResult := map[string]interface{}{
+								"type":        "tool_result",
+								"tool_use_id": claudeToolID,
+								"content":     content,
+							}
+							
+							
+							toolResults = append(toolResults, toolResult)
+							i++
+						} else {
+							break
+						}
+					} else {
+						break
+					}
+				}
+				
+				if len(toolResults) > 0 {
+					// Create user message with tool results
+					userMessage := map[string]interface{}{
+						"role":    "user",
+						"content": toolResults,
+					}
+					transformedMessages = append(transformedMessages, userMessage)
+				}
+			} else {
+				// Regular message, keep as-is
+				transformedMessages = append(transformedMessages, msgMap)
+				i++
+			}
+		} else {
+			// Non-map message, keep as-is
+			transformedMessages = append(transformedMessages, messages[i])
+			i++
+		}
+	}
+
+	return transformedMessages
+}
+
+func (h *ProxyHandler) transformOpenAIToolsToClaude(tools []interface{}) []interface{} {
+	claudeTools := make([]interface{}, 0, len(tools))
+
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]interface{}); ok {
+			// Check if this is OpenAI format: {"type": "function", "function": {...}}
+			if toolType, ok := toolMap["type"].(string); ok && toolType == "function" {
+				if function, ok := toolMap["function"].(map[string]interface{}); ok {
+					claudeTool := map[string]interface{}{
+						"name":        function["name"],
+						"description": function["description"],
+					}
+					
+					// Transform parameters to input_schema
+					if parameters, ok := function["parameters"]; ok {
+						claudeTool["input_schema"] = parameters
+					}
+					
+					
+					claudeTools = append(claudeTools, claudeTool)
+				}
+			} else {
+				// Already in Claude format or unknown format, keep as-is
+				claudeTools = append(claudeTools, tool)
+			}
+		}
+	}
+
+	return claudeTools
 }
 
 func (h *ProxyHandler) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
@@ -442,19 +558,9 @@ func (h *ProxyHandler) removeAnthropicSpecificFields(request map[string]interfac
 
 	// Handle tool_choice logic: only remove if no tools are present, tools is null, or tools is empty array
 	if tools, hasTools := cleaned["tools"]; !hasTools || tools == nil {
-		if _, hasToolChoice := cleaned["tool_choice"]; hasToolChoice {
-			h.logger.Debug("Removed tool_choice: no tools field or tools is null")
-		}
 		delete(cleaned, "tool_choice")
 	} else if toolsArray, ok := tools.([]interface{}); ok && len(toolsArray) == 0 {
-		if _, hasToolChoice := cleaned["tool_choice"]; hasToolChoice {
-			h.logger.Debug("Removed tool_choice: tools array is empty")
-		}
 		delete(cleaned, "tool_choice")
-	} else {
-		if _, hasToolChoice := cleaned["tool_choice"]; hasToolChoice {
-			h.logger.Debug("Keeping tool_choice: tools array has content", "tools_count", len(tools.([]interface{})))
-		}
 	}
 
 	return cleaned
@@ -491,9 +597,11 @@ func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove 
 func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error) {
 	transformedTools := make([]interface{}, 0, len(tools))
 	
-	for _, tool := range tools {
+	for i, tool := range tools {
+		
 		toolMap, ok := tool.(map[string]interface{})
 		if !ok {
+			h.logger.Warn("Skipping malformed tool", "index", i, "type", fmt.Sprintf("%T", tool))
 			continue // Skip malformed tools
 		}
 		
@@ -510,6 +618,7 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 		// Claude tools might have: name, description, input_schema
 		// OpenAI tools need: type: "function", function: {name, description, parameters}
 		if name, hasName := toolMap["name"].(string); hasName {
+			
 			openAITool := map[string]interface{}{
 				"type": "function",
 				"function": map[string]interface{}{
@@ -528,8 +637,9 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
 				function["parameters"] = inputSchema
 			}
-			
 			transformedTools = append(transformedTools, openAITool)
+		} else {
+			h.logger.Warn("Tool missing name field", "index", i, "tool", toolMap)
 		}
 	}
 	
@@ -537,18 +647,246 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 }
 
 func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
-	// Remove cache_control from individual messages as well
-	transformedMessages := make([]interface{}, len(messages))
+	transformedMessages := make([]interface{}, 0, len(messages))
+	
 	for i, message := range messages {
 		if msgMap, ok := message.(map[string]interface{}); ok {
-			// Remove cache_control from this message
+			
+			// Check role-specific transformations
+			if role, ok := msgMap["role"].(string); ok {
+				if role == "user" {
+					// Transform user messages with tool_result blocks to OpenAI tool message format
+					if content, ok := msgMap["content"].([]interface{}); ok {
+						toolResultMessages := h.extractToolResults(content, i)
+						if len(toolResultMessages) > 0 {
+							transformedMessages = append(transformedMessages, toolResultMessages...)
+							continue // Skip the original message as we've replaced it
+						}
+					}
+				} else if role == "assistant" {
+					// Transform assistant messages with tool_use blocks to OpenAI tool_calls format
+					if content, ok := msgMap["content"].([]interface{}); ok {
+						transformedMessage := h.transformAssistantMessage(msgMap, content, i)
+						if transformedMessage != nil {
+							transformedMessages = append(transformedMessages, transformedMessage)
+							continue
+						}
+					}
+				}
+			}
+			
+			// Regular message transformation - remove cache_control
 			cleanedMessage := h.removeFieldsRecursively(msgMap, []string{"cache_control"})
-			transformedMessages[i] = cleanedMessage
+			transformedMessages = append(transformedMessages, cleanedMessage)
 		} else {
-			transformedMessages[i] = message
+			transformedMessages = append(transformedMessages, message)
 		}
 	}
 	return transformedMessages
+}
+
+// extractToolResults converts Claude tool_result blocks to OpenAI tool message format
+func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex int) []interface{} {
+	var toolMessages []interface{}
+	var regularContent []interface{}
+	
+	for _, contentBlock := range content {
+		if blockMap, ok := contentBlock.(map[string]interface{}); ok {
+			if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_result" {
+				toolUseID, _ := blockMap["tool_use_id"].(string)
+				resultContent := blockMap["content"]
+				
+				h.logger.Info("Processing tool result", 
+					"tool_use_id", toolUseID,
+					"content_preview", h.truncateContent(resultContent, 100))
+				
+				// Convert Claude tool_use_id (toolu_*) to OpenAI tool_call_id (call_*)
+				// Handle malformed double-prefix cases
+				var openAIToolID string
+				if strings.HasPrefix(toolUseID, "toolu_toolu_") {
+					// Malformed double prefix - extract the core ID
+					coreID := strings.TrimPrefix(toolUseID, "toolu_toolu_")
+					openAIToolID = "call_" + coreID
+					h.logger.Warn("Fixed malformed double toolu_ prefix", 
+						"original_id", toolUseID,
+						"core_id", coreID,
+						"fixed_id", openAIToolID)
+				} else if strings.HasPrefix(toolUseID, "toolu_") {
+					openAIToolID = "call_" + strings.TrimPrefix(toolUseID, "toolu_")
+				} else if strings.HasPrefix(toolUseID, "call_") {
+					// Already in OpenAI format, keep as-is
+					openAIToolID = toolUseID
+				} else {
+					// Unknown format, add call_ prefix
+					openAIToolID = "call_" + toolUseID
+				}
+				
+				// Create OpenAI format tool message
+				toolMessage := map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": openAIToolID,
+					"content":      h.formatToolResultContent(resultContent),
+				}
+				
+				
+				// Validate ID format
+				if strings.Contains(openAIToolID, "toolu_") {
+					h.logger.Warn("Invalid tool_call_id format detected", 
+						"original_id", toolUseID,
+						"converted_id", openAIToolID,
+						"error", "tool_call_id should not contain toolu_ prefix")
+				}
+				
+				toolMessages = append(toolMessages, toolMessage)
+			} else {
+				// Regular content block
+				regularContent = append(regularContent, contentBlock)
+			}
+		} else {
+			// Non-map content block
+			regularContent = append(regularContent, contentBlock)
+		}
+	}
+	
+	// If we found tool results, return them as separate messages
+	// If we also have regular content, add it as a user message after tool results
+	if len(toolMessages) > 0 {
+		if len(regularContent) > 0 {
+			regularMessage := map[string]interface{}{
+				"role":    "user",
+				"content": regularContent,
+			}
+			toolMessages = append(toolMessages, regularMessage)
+		}
+		return toolMessages
+	}
+	
+	// No tool results found
+	return nil
+}
+
+// formatToolResultContent converts tool result content to string format expected by OpenAI
+func (h *ProxyHandler) formatToolResultContent(content interface{}) string {
+	if str, ok := content.(string); ok {
+		return str
+	}
+	
+	// Handle array of content blocks (text/image)
+	if contentArray, ok := content.([]interface{}); ok {
+		var textParts []string
+		for _, block := range contentArray {
+			if blockMap, ok := block.(map[string]interface{}); ok {
+				if blockType, ok := blockMap["type"].(string); ok && blockType == "text" {
+					if text, ok := blockMap["text"].(string); ok {
+						textParts = append(textParts, text)
+					}
+				}
+			}
+		}
+		if len(textParts) > 0 {
+			return strings.Join(textParts, "\n")
+		}
+	}
+	
+	// Fallback: convert to JSON string
+	if jsonBytes, err := json.Marshal(content); err == nil {
+		return string(jsonBytes)
+	}
+	
+	return fmt.Sprintf("%v", content)
+}
+
+// truncateContent truncates content for logging while preserving readability
+func (h *ProxyHandler) truncateContent(content interface{}, maxLen int) string {
+	str := fmt.Sprintf("%v", content)
+	if len(str) <= maxLen {
+		return str
+	}
+	return str[:maxLen] + "..."
+}
+
+// transformAssistantMessage converts Claude assistant messages with tool_use blocks to OpenAI format with tool_calls
+func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}, messageIndex int) map[string]interface{} {
+	var textContent strings.Builder
+	var toolCalls []interface{}
+	
+	for _, contentBlock := range content {
+		if blockMap, ok := contentBlock.(map[string]interface{}); ok {
+			blockType, _ := blockMap["type"].(string)
+			
+			switch blockType {
+			case "text":
+				// Extract text content
+				if text, ok := blockMap["text"].(string); ok {
+					textContent.WriteString(text)
+				}
+			case "tool_use":
+				// Convert Claude tool_use to OpenAI tool_call format
+				toolUseID, _ := blockMap["id"].(string)
+				toolName, _ := blockMap["name"].(string) 
+				toolInput := blockMap["input"]
+				
+				h.logger.Info("Processing tool use", 
+					"tool_id", toolUseID,
+					"tool_name", toolName,
+					"tool_input", toolInput)
+				
+				// Convert Claude tool_use_id (toolu_*) to OpenAI tool_call_id (call_*)
+				var openAIToolID string
+				if strings.HasPrefix(toolUseID, "toolu_") {
+					openAIToolID = "call_" + strings.TrimPrefix(toolUseID, "toolu_")
+				} else if strings.HasPrefix(toolUseID, "call_") {
+					openAIToolID = toolUseID
+				} else {
+					openAIToolID = "call_" + toolUseID
+				}
+				
+				// Convert input to JSON string format expected by OpenAI
+				var argumentsJSON string
+				if toolInput != nil {
+					if inputBytes, err := json.Marshal(toolInput); err == nil {
+						argumentsJSON = string(inputBytes)
+					} else {
+						argumentsJSON = "{}"
+					}
+				} else {
+					argumentsJSON = "{}"
+				}
+				
+				// Create OpenAI tool_call format
+				toolCall := map[string]interface{}{
+					"id":   openAIToolID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      toolName,
+						"arguments": argumentsJSON,
+					},
+				}
+				
+				
+				toolCalls = append(toolCalls, toolCall)
+			}
+		}
+	}
+	
+	// Only return transformed message if we found tool_use blocks
+	if len(toolCalls) > 0 {
+		result := map[string]interface{}{
+			"role":       "assistant",
+			"content":    textContent.String(),
+			"tool_calls": toolCalls,
+		}
+		
+		// If content is empty, set to null as expected by OpenAI format
+		if textContent.Len() == 0 {
+			result["content"] = nil
+		}
+		
+		return result
+	}
+	
+	// No tool_use blocks found, return nil to indicate no transformation needed
+	return nil
 }
 
 func (h *ProxyHandler) logResponseTokens(respBody []byte, statusCode int, inputTokens int) {

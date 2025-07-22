@@ -31,12 +31,13 @@ type StreamState struct {
 
 // ContentBlockState tracks individual content block state during streaming
 type ContentBlockState struct {
-	Type       string // "text" or "tool_use"
-	StartSent  bool
-	StopSent   bool
-	ToolCallID string // For tool_use blocks
-	ToolName   string // For tool_use blocks
-	Arguments  string // Accumulated arguments for tool_use blocks
+	Type          string // "text" or "tool_use"
+	StartSent     bool
+	StopSent      bool
+	ToolCallID    string // For tool_use blocks
+	ToolCallIndex int    // OpenRouter tool call index for tracking across chunks
+	ToolName      string // For tool_use blocks
+	Arguments     string // Accumulated arguments for tool_use blocks
 }
 
 // Registry manages provider instances
