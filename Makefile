@@ -1,8 +1,8 @@
-# Claude Code Router Makefile
+# Claude Code Open Makefile
 
 # Variables
-BINARY_NAME=ccr
-VERSION=0.2.0
+BINARY_NAME=cco
+VERSION=0.3.0
 BUILD_DIR=build
 MAIN_PACKAGE=.
 
@@ -16,7 +16,7 @@ GOMOD=$(GOCMD) mod
 GOFMT=gofmt
 
 # Build flags
-BUILD_FLAGS=-ldflags="-s -w -X 'github.com/Davincible/claude-code-router-go/cmd.Version=$(VERSION)'"
+BUILD_FLAGS=-ldflags="-s -w -X 'github.com/Davincible/claude-code-open/cmd.Version=$(VERSION)'"
 
 .PHONY: all build clean test coverage fmt lint help install uninstall build-all
 
@@ -85,12 +85,12 @@ dev:
 
 ## docker-build: Build Docker image
 docker-build:
-	docker build -t claude-code-router:$(VERSION) .
-	docker tag claude-code-router:$(VERSION) claude-code-router:latest
+	docker build -t claude-code-open:$(VERSION) .
+	docker tag claude-code-open:$(VERSION) claude-code-open:latest
 
 ## docker-run: Run Docker container
 docker-run:
-	docker run --rm -p 6970:6970 -v ~/.claude-code-router:/root/.claude-code-router claude-code-router:latest
+	docker run --rm -p 6970:6970 -v ~/.claude-code-open:/root/.claude-code-open claude-code-open:latest
 
 ## release: Create release build
 release: clean fmt test build-all
