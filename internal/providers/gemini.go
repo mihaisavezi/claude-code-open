@@ -28,6 +28,10 @@ func (p *GeminiProvider) SupportsStreaming() bool {
 }
 
 func (p *GeminiProvider) GetEndpoint() string {
+	if p.endpoint == "" {
+		return "https://generativelanguage.googleapis.com/v1beta/models"
+	}
+
 	return p.endpoint
 }
 
@@ -63,20 +67,20 @@ func (p *GeminiProvider) TransformStream(chunk []byte, state *StreamState) ([]by
 
 // Gemini format structures
 type geminiResponse struct {
-	Candidates     []geminiCandidate  `json:"candidates,omitempty"`
+	Candidates     []geminiCandidate     `json:"candidates,omitempty"`
 	PromptFeedback *geminiPromptFeedback `json:"promptFeedback,omitempty"`
 	UsageMetadata  *geminiUsageMetadata  `json:"usageMetadata,omitempty"`
-	ModelVersion   string             `json:"modelVersion,omitempty"`
-	ResponseID     string             `json:"responseId,omitempty"`
-	Error          *geminiError       `json:"error,omitempty"`
+	ModelVersion   string                `json:"modelVersion,omitempty"`
+	ResponseID     string                `json:"responseId,omitempty"`
+	Error          *geminiError          `json:"error,omitempty"`
 }
 
 type geminiCandidate struct {
-	Content         *geminiContent      `json:"content,omitempty"`
-	FinishReason    string              `json:"finishReason,omitempty"`
-	SafetyRatings   []geminiSafetyRating `json:"safetyRatings,omitempty"`
-	TokenCount      int                 `json:"tokenCount,omitempty"`
-	Index           int                 `json:"index,omitempty"`
+	Content       *geminiContent       `json:"content,omitempty"`
+	FinishReason  string               `json:"finishReason,omitempty"`
+	SafetyRatings []geminiSafetyRating `json:"safetyRatings,omitempty"`
+	TokenCount    int                  `json:"tokenCount,omitempty"`
+	Index         int                  `json:"index,omitempty"`
 }
 
 type geminiContent struct {
@@ -85,8 +89,8 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text         string                 `json:"text,omitempty"`
-	FunctionCall *geminiFunctionCall    `json:"functionCall,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *geminiFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
 }
 
@@ -101,8 +105,8 @@ type geminiFunctionResponse struct {
 }
 
 type geminiPromptFeedback struct {
-	BlockReason    string               `json:"blockReason,omitempty"`
-	SafetyRatings  []geminiSafetyRating `json:"safetyRatings,omitempty"`
+	BlockReason   string               `json:"blockReason,omitempty"`
+	SafetyRatings []geminiSafetyRating `json:"safetyRatings,omitempty"`
 }
 
 type geminiSafetyRating struct {
@@ -238,16 +242,16 @@ func (p *GeminiProvider) convertGeminiContent(content *geminiContent) ([]anthrop
 
 func (p *GeminiProvider) convertStopReason(geminiReason string) *string {
 	mapping := map[string]string{
-		"STOP":                     "end_turn",
-		"MAX_TOKENS":               "max_tokens",
-		"SAFETY":                   "stop_sequence",
-		"RECITATION":               "stop_sequence",
-		"LANGUAGE":                 "stop_sequence",
-		"OTHER":                    "end_turn",
-		"BLOCKLIST":                "stop_sequence",
-		"PROHIBITED_CONTENT":       "stop_sequence",
-		"SPII":                     "stop_sequence",
-		"MALFORMED_FUNCTION_CALL":  "tool_use",
+		"STOP":                      "end_turn",
+		"MAX_TOKENS":                "max_tokens",
+		"SAFETY":                    "stop_sequence",
+		"RECITATION":                "stop_sequence",
+		"LANGUAGE":                  "stop_sequence",
+		"OTHER":                     "end_turn",
+		"BLOCKLIST":                 "stop_sequence",
+		"PROHIBITED_CONTENT":        "stop_sequence",
+		"SPII":                      "stop_sequence",
+		"MALFORMED_FUNCTION_CALL":   "tool_use",
 		"FINISH_REASON_UNSPECIFIED": "end_turn",
 	}
 

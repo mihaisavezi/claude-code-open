@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Davincible/claude-code-router-go/internal/config"
-	"github.com/Davincible/claude-code-router-go/internal/providers"
+	"github.com/Davincible/claude-code-open/internal/config"
+	"github.com/Davincible/claude-code-open/internal/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -864,7 +864,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 		assert.Equal(t, "tool", toolMsg["role"], "should be tool role")
 		assert.Equal(t, "call_12345", toolMsg["tool_call_id"], "should convert tool_use_id to tool_call_id")
 		assert.Equal(t, "Weather result: 75°F, sunny", toolMsg["content"], "should preserve content")
-		
+
 		// Ensure no toolu_ remains in the tool_call_id
 		assert.NotContains(t, toolMsg["tool_call_id"], "toolu_", "tool_call_id should not contain toolu_ prefix")
 	})
@@ -888,7 +888,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 		assert.Len(t, transformed, 1)
 		toolMsg := transformed[0].(map[string]interface{})
 		assert.Equal(t, "tool", toolMsg["role"])
-		
+
 		// Should keep the already-formatted ID as-is
 		assert.Equal(t, "call_toolu_vrtx_01Cg2DgMwQBjmQNSWXvJpJfJ", toolMsg["tool_call_id"], "should preserve already-formatted call_ ID")
 	})
@@ -899,7 +899,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 			expected string
 		}{
 			{"toolu_12345", "call_12345"},
-			{"call_12345", "call_12345"}, // Already formatted
+			{"call_12345", "call_12345"},             // Already formatted
 			{"call_toolu_12345", "call_toolu_12345"}, // Malformed but preserved
 			{"some_other_format", "call_some_other_format"},
 		}
@@ -920,7 +920,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 
 			transformed := handler.transformMessages(messages)
 			toolMsg := transformed[0].(map[string]interface{})
-			assert.Equal(t, tc.expected, toolMsg["tool_call_id"], 
+			assert.Equal(t, tc.expected, toolMsg["tool_call_id"],
 				"Failed for input ID: %s", tc.inputID)
 		}
 	})
@@ -936,7 +936,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 						"content":     "Weather: 75°F",
 					},
 					map[string]interface{}{
-						"type":        "tool_result", 
+						"type":        "tool_result",
 						"tool_use_id": "toolu_67890",
 						"content":     "Time: 3:30 PM",
 					},
@@ -1010,7 +1010,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 								"text": "First part",
 							},
 							map[string]interface{}{
-								"type": "text", 
+								"type": "text",
 								"text": "Second part",
 							},
 						},
@@ -1039,7 +1039,7 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 				},
 			},
 			map[string]interface{}{
-				"role":    "assistant", 
+				"role":    "assistant",
 				"content": "Assistant response",
 			},
 		}
@@ -1047,10 +1047,10 @@ func TestTransformMessages_ToolResultTransformation(t *testing.T) {
 		transformed := handler.transformMessages(messages)
 
 		assert.Len(t, transformed, 2, "should preserve all regular messages")
-		
+
 		userMsg := transformed[0].(map[string]interface{})
 		assert.Equal(t, "user", userMsg["role"])
-		
+
 		assistantMsg := transformed[1].(map[string]interface{})
 		assert.Equal(t, "assistant", assistantMsg["role"])
 		assert.Equal(t, "Assistant response", assistantMsg["content"])
@@ -1265,22 +1265,22 @@ func TestTransformAssistantMessage_ToolUse(t *testing.T) {
 
 	content := claudeAssistantMsg["content"].([]interface{})
 	result := handler.transformAssistantMessage(claudeAssistantMsg, content, 0)
-	
+
 	require.NotNil(t, result, "Should transform assistant message with tool_use")
-	
+
 	// Verify basic structure
 	assert.Equal(t, "assistant", result["role"])
 	assert.Equal(t, "I'll check the current directory for you.", result["content"])
-	
+
 	// Verify tool_calls transformation
 	toolCalls, ok := result["tool_calls"].([]interface{})
 	require.True(t, ok, "Should have tool_calls array")
 	require.Len(t, toolCalls, 1, "Should have one tool call")
-	
+
 	toolCall := toolCalls[0].(map[string]interface{})
 	assert.Equal(t, "call_vrtx_01QDQTnz2yrXxP3GkGNXF5yy", toolCall["id"], "Should convert toolu_ to call_")
 	assert.Equal(t, "function", toolCall["type"])
-	
+
 	function := toolCall["function"].(map[string]interface{})
 	assert.Equal(t, "LS", function["name"])
 	assert.Equal(t, `{"path":"/home/user"}`, function["arguments"])
@@ -1303,7 +1303,7 @@ func TestTransformAssistantMessage_NoToolUse(t *testing.T) {
 
 	content := claudeAssistantMsg["content"].([]interface{})
 	result := handler.transformAssistantMessage(claudeAssistantMsg, content, 0)
-	
+
 	assert.Nil(t, result, "Should not transform assistant message without tool_use")
 }
 

@@ -57,29 +57,32 @@ The proxy handler performs bidirectional transformations between Claude and prov
 **Claude → OpenAI/OpenRouter:**
 ```json
 // Claude format
-{
-  "name": "get_weather",
-  "description": "Get current weather",
-  "input_schema": {
-    "type": "object",
-    "properties": {"location": {"type": "string"}},
-    "required": ["location"]
-  }
-}
+
+	{
+	  "name": "get_weather",
+	  "description": "Get current weather",
+	  "input_schema": {
+	    "type": "object",
+	    "properties": {"location": {"type": "string"}},
+	    "required": ["location"]
+	  }
+	}
 
 // Transformed to OpenAI/OpenRouter format
-{
-  "type": "function",
-  "function": {
-    "name": "get_weather",
-    "description": "Get current weather", 
-    "parameters": {
-      "type": "object",
-      "properties": {"location": {"type": "string"}},
-      "required": ["location"]
-    }
-  }
-}
+
+	{
+	  "type": "function",
+	  "function": {
+	    "name": "get_weather",
+	    "description": "Get current weather",
+	    "parameters": {
+	      "type": "object",
+	      "properties": {"location": {"type": "string"}},
+	      "required": ["location"]
+	    }
+	  }
+	}
+
 ```
 
 #### Tool Choice Validation
@@ -167,7 +170,7 @@ Implement Transform for complete responses (Provider → Claude format):
 		return json.Marshal(claudeResponse)
 	}
 
-Note: This method transforms provider responses TO Claude format. Request transformation 
+Note: This method transforms provider responses TO Claude format. Request transformation
 (Claude → Provider) is handled automatically by the proxy handler.
 
 ### 4. Streaming Response Transformation
@@ -191,7 +194,7 @@ Implement TransformStream for real-time chunk processing (Provider → Claude fo
 		return events, nil
 	}
 
-Note: This method transforms provider streaming responses TO Claude format. Request 
+Note: This method transforms provider streaming responses TO Claude format. Request
 transformation (including tool schema) is handled automatically by the proxy handler.
 
 ## Streaming Implementation Details
@@ -319,16 +322,16 @@ For streaming tool calls:
 				// Handle both incremental and non-incremental argument updates
 				if arguments != "" && arguments != contentBlock.Arguments {
 					var newPart string
-					
+
 					// Check if arguments are incremental (common case)
-					if len(arguments) > len(contentBlock.Arguments) && 
+					if len(arguments) > len(contentBlock.Arguments) &&
 					   strings.HasPrefix(arguments, contentBlock.Arguments) {
 						newPart = arguments[len(contentBlock.Arguments):]
 					} else {
 						// Non-incremental update - send entire new part
 						newPart = arguments
 					}
-					
+
 					contentBlock.Arguments = arguments
 
 					deltaEvent := map[string]interface{}{
@@ -393,7 +396,7 @@ Generate events in Claude's expected format:
 
 **Tool Schema:**
 - `name` → `function.name` (preserved)
-- `description` → `function.description` (preserved)  
+- `description` → `function.description` (preserved)
 - `input_schema` → `function.parameters` (schema structure preserved)
 - Wrapped in: `{"type": "function", "function": {...}}`
 
@@ -453,11 +456,11 @@ Generate events in Claude's expected format:
 
 #### Provider Tests (Response Transformation)
 1. **Basic Methods**: Name, SupportsStreaming, etc.
-2. **Non-Streaming Transform**: Complete response conversion  
+2. **Non-Streaming Transform**: Complete response conversion
 3. **Tool Calls Transform**: Tool call conversion and ID mapping
 4. **Web Search Annotations**: Annotation and server tool use preservation
 5. **Streaming Transform**: Chunk-by-chunk conversion with tool calls
-6. **Streaming State**: Multiple content blocks, tool calls  
+6. **Streaming State**: Multiple content blocks, tool calls
 7. **Stop Reason Mapping**: All provider-specific stop reasons
 8. **Error Cases**: Malformed input, missing fields
 
@@ -520,7 +523,7 @@ See existing implementations for detailed examples:
 
 ### Provider Examples (Response Transformation)
 - **OpenRouter** (`openrouter.go`): Full implementation with tool calling
-- **OpenAI** (`openai.go`): Similar to OpenRouter with minor differences  
+- **OpenAI** (`openai.go`): Similar to OpenRouter with minor differences
 - **Anthropic** (`anthropic.go`): Pass-through implementation
 
 The OpenRouter provider is the most complete reference implementation,
@@ -530,7 +533,7 @@ and enhanced usage information handling with server tool use metrics.
 ### Proxy Handler (Request Transformation)
 - **Proxy Handler** (`internal/handlers/proxy.go`): Complete request transformation pipeline
   - `transformAnthropicToOpenAI()`: Main transformation function
-  - `transformTools()`: Tool schema transformation (Claude → OpenAI format) 
+  - `transformTools()`: Tool schema transformation (Claude → OpenAI format)
   - `removeAnthropicSpecificFields()`: Field removal and tool_choice validation
   - Comprehensive test coverage in `proxy_test.go`
 

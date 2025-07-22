@@ -19,8 +19,14 @@ type Manager struct {
 }
 
 func NewManager(baseDir string) *Manager {
+	// Determine which PID filename to use based on baseDir
+	pidFilename := ".claude-code-open.pid"
+	if strings.Contains(baseDir, "claude-code-router") {
+		pidFilename = ".claude-code-router.pid"
+	}
+
 	return &Manager{
-		pidFile: filepath.Join(baseDir, ".claude-code-router.pid"),
+		pidFile: filepath.Join(baseDir, pidFilename),
 		refFile: filepath.Join(os.TempDir(), "claude-code-reference-count.txt"),
 	}
 }

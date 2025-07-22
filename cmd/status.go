@@ -6,7 +6,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/Davincible/claude-code-router-go/internal/process"
+	"github.com/Davincible/claude-code-open/internal/process"
 )
 
 var statusCmd = &cobra.Command{

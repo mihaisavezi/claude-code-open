@@ -28,6 +28,10 @@ func (p *OpenAIProvider) SupportsStreaming() bool {
 }
 
 func (p *OpenAIProvider) GetEndpoint() string {
+	if p.endpoint == "" {
+		p.endpoint = "https://api.openai.com/v1/chat/completions"
+	}
+
 	return p.endpoint
 }
 
@@ -261,7 +265,7 @@ func (p *OpenAIProvider) convertMessageContent(message *openAIMessage) ([]anthro
 
 		claudeToolID := p.convertToolCallID(*message.ToolCallId)
 		content = append(content, anthropicContent{
-			Type:      "tool_result", 
+			Type:      "tool_result",
 			ToolUseId: &claudeToolID,
 			Content:   toolContent,
 		})
@@ -502,11 +506,11 @@ func (p *OpenAIProvider) handleSingleToolCall(toolCall map[string]interface{}, s
 
 // OpenAIToolCallData holds parsed tool call information for OpenAI provider
 type OpenAIToolCallData struct {
-	Index       int
-	HasIndex    bool
-	ID          string
+	Index        int
+	HasIndex     bool
+	ID           string
 	FunctionName string
-	Arguments   string
+	Arguments    string
 }
 
 // parseToolCallData extracts tool call information from OpenAI chunk
@@ -558,11 +562,11 @@ func (p *OpenAIProvider) findOrCreateContentBlock(data OpenAIToolCallData, state
 	if data.ID != "" {
 		contentBlockIndex := len(state.ContentBlocks)
 		state.ContentBlocks[contentBlockIndex] = &ContentBlockState{
-			Type:           "tool_use",
-			ToolCallID:     data.ID,
-			ToolCallIndex:  data.Index,
-			ToolName:       data.FunctionName,
-			Arguments:      "",
+			Type:          "tool_use",
+			ToolCallID:    data.ID,
+			ToolCallIndex: data.Index,
+			ToolName:      data.FunctionName,
+			Arguments:     "",
 		}
 		return contentBlockIndex
 	}

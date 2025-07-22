@@ -10,10 +10,10 @@ import (
 
 func TestNvidiaProvider_BasicMethods(t *testing.T) {
 	provider := NewNvidiaProvider()
-	
+
 	assert.Equal(t, "nvidia", provider.Name())
 	assert.True(t, provider.SupportsStreaming())
-	
+
 	provider.SetAPIKey("test-key")
 	assert.Equal(t, "test-key", provider.apiKey)
 }
@@ -158,7 +158,7 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 
 	nvidiaResponse := map[string]interface{}{
 		"id":      "chatcmpl-nvidia-123",
-		"object":  "chat.completion", 
+		"object":  "chat.completion",
 		"created": 1677652288,
 		"model":   "nvidia/llama-3.1-nemotron-70b-instruct",
 		"choices": []map[string]interface{}{
@@ -205,7 +205,7 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 
 	toolBlock := content[0].(map[string]interface{})
 	assert.Equal(t, "tool_use", toolBlock["type"])
-	
+
 	id, ok := toolBlock["id"]
 	require.True(t, ok)
 	if idPtr, isPtr := id.(*string); isPtr {
@@ -213,9 +213,9 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 	} else {
 		assert.Equal(t, "toolu_nvidia123", id.(string))
 	}
-	
+
 	name, ok := toolBlock["name"]
-	require.True(t, ok)  
+	require.True(t, ok)
 	if namePtr, isPtr := name.(*string); isPtr {
 		assert.Equal(t, "get_weather", *namePtr)
 	} else {
@@ -260,7 +260,7 @@ func TestNvidiaProvider_ErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "error", anthropicResp["type"])
-	
+
 	errorInfo, ok := anthropicResp["error"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "authentication_error", errorInfo["type"])
@@ -324,7 +324,7 @@ func TestNvidiaProvider_TransformStream(t *testing.T) {
 
 	// Test finish chunk
 	finishChunk := map[string]interface{}{
-		"id":    "chatcmpl-nvidia-123", 
+		"id":    "chatcmpl-nvidia-123",
 		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
 		"choices": []map[string]interface{}{
 			{
@@ -393,7 +393,7 @@ func TestNvidiaProvider_StreamingToolCalls(t *testing.T) {
 	// Second chunk with arguments
 	toolCallArgsChunk := map[string]interface{}{
 		"id":    "chatcmpl-nvidia-123",
-		"model": "nvidia/llama-3.1-nemotron-70b-instruct", 
+		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
 		"choices": []map[string]interface{}{
 			{
 				"index": 0,

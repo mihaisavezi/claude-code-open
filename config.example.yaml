@@ -1,5 +1,5 @@
-# Claude Code Router Configuration
-# Generate this file with: ccr config generate
+# Claude Code Open Configuration
+# Generate this file with: cco config generate
 
 # Server configuration
 host: 127.0.0.1           # Host to bind to

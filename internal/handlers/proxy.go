@@ -8,13 +8,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/andybalholm/brotli"
 	"github.com/pkoukk/tiktoken-go"
 
-	"github.com/Davincible/claude-code-router-go/internal/config"
-	"github.com/Davincible/claude-code-router-go/internal/providers"
+	"github.com/Davincible/claude-code-open/internal/config"
+	"github.com/Davincible/claude-code-open/internal/providers"
 )
 
 type ProxyHandler struct {
@@ -68,8 +69,11 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Debug("Sending request to provider", "provider", provider.Name(), "body", string(finalBody))
 	}
 
+	// Build final endpoint URL (handle special cases like Gemini)
+	finalURL := h.buildEndpointURL(provider, providerConfig.APIBase, modelName)
+	
 	// Create upstream request
-	req, err := http.NewRequest(r.Method, providerConfig.APIBase, strings.NewReader(string(finalBody)))
+	req, err := http.NewRequest(r.Method, finalURL, strings.NewReader(string(finalBody)))
 	if err != nil {
 		h.httpError(w, http.StatusInternalServerError, "failed to create upstream request: %v", err)
 		return
@@ -78,13 +82,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Copy headers and set auth
 	req.Header = r.Header.Clone()
 	if providerConfig.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+providerConfig.APIKey)
+		h.setAuthHeader(req, provider, providerConfig.APIKey)
 	}
 
 	h.logger.Info("Proxying request",
 		"provider", provider.Name(),
 		"model", modelName,
-		"url", providerConfig.APIBase,
+		"url", finalURL,
 		"input_tokens", inputTokens,
 	)
 
@@ -264,17 +268,45 @@ func (h *ProxyHandler) findProvider(modelName string, cfg *config.Config) (provi
 		}
 	}
 
-	if providerConfig == nil {
-		return nil, nil, fmt.Errorf("provider '%s' not found in configuration", providerName)
+	var provider providers.Provider
+
+	if providerConfig != nil {
+		_provider, err := h.registry.GetByDomain(providerConfig.APIBase)
+		if err != nil {
+			return nil, nil, fmt.Errorf("no provider implementation for domain: %w", err)
+		}
+
+		provider = _provider
+	} else {
+		_provider, ok := h.registry.Get(providerName)
+		if !ok {
+			return nil, nil, fmt.Errorf("provider '%s' not found in registry", providerName)
+		}
+
+		providerConfig = &config.Provider{
+			Name:    _provider.Name(),
+			APIBase: _provider.GetEndpoint(),
+		}
+
+		provider = _provider
 	}
 
-	// Get provider implementation by domain
-	provider, err := h.registry.GetByDomain(providerConfig.APIBase)
-	if err != nil {
-		return nil, nil, fmt.Errorf("no provider implementation for domain: %w", err)
+	// Use provider-specific API key if available, otherwise fallback to CCO_API_KEY
+	var apiKey string
+	if providerConfig != nil {
+		apiKey = providerConfig.APIKey
 	}
 
-	provider.SetAPIKey(providerConfig.APIKey)
+	if apiKey == "" {
+		if ccoAPIKey := os.Getenv("CCO_API_KEY"); ccoAPIKey != "" {
+			apiKey = ccoAPIKey
+			h.logger.Debug("Using CCO_API_KEY for provider", "provider", provider.Name())
+		}
+
+		providerConfig.APIKey = apiKey
+	}
+
+	provider.SetAPIKey(apiKey)
 
 	return provider, providerConfig, nil
 }
@@ -389,6 +421,8 @@ func (h *ProxyHandler) transformRequestToProviderFormat(requestBody []byte, prov
 	switch providerName {
 	case "openrouter", "openai":
 		return h.transformAnthropicToOpenAI(requestBody)
+	case "gemini":
+		return h.transformAnthropicToGemini(requestBody)
 	case "anthropic":
 		return h.transformOpenAIToAnthropic(requestBody)
 	default:
@@ -402,9 +436,31 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
 	}
 
-
 	// Remove Anthropic-specific fields that OpenAI doesn't support
 	cleanedRequest := h.removeAnthropicSpecificFields(request)
+
+	// Handle system parameter - convert it to a system message in messages array
+	if systemContent, hasSystem := cleanedRequest["system"]; hasSystem {
+		if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
+			// Create system message
+			systemMessage := map[string]interface{}{
+				"role":    "system",
+				"content": systemContent,
+			}
+			
+			// Prepend system message to messages array
+			newMessages := append([]interface{}{systemMessage}, messages...)
+			cleanedRequest["messages"] = newMessages
+		}
+		// Remove the system parameter as OpenAI doesn't support it at root level
+		delete(cleanedRequest, "system")
+	}
+
+	// Handle max_tokens parameter - convert to max_completion_tokens for OpenAI compatibility
+	if maxTokens, hasMaxTokens := cleanedRequest["max_tokens"]; hasMaxTokens {
+		cleanedRequest["max_completion_tokens"] = maxTokens
+		delete(cleanedRequest, "max_tokens")
+	}
 
 	// Transform any Anthropic-specific message formats if needed
 	if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
@@ -422,7 +478,7 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 			}
 		} else {
 			cleanedRequest["tools"] = transformedTools
-			
+
 			// Re-validate tool_choice after successful transformation
 			// If transformed tools array is empty, remove tool_choice
 			if len(transformedTools) == 0 {
@@ -441,7 +497,6 @@ func (h *ProxyHandler) transformOpenAIToAnthropic(openAIRequest []byte) ([]byte,
 	if err := json.Unmarshal(openAIRequest, &request); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OpenAI request: %w", err)
 	}
-
 
 	// Transform messages from OpenAI format to Claude format
 	if messages, ok := request["messages"].([]interface{}); ok {
@@ -465,10 +520,10 @@ func (h *ProxyHandler) transformOpenAIMessagesToClaude(messages []interface{}) [
 	for i < len(messages) {
 		if msgMap, ok := messages[i].(map[string]interface{}); ok {
 			role, _ := msgMap["role"].(string)
-			
+
 			if role == "tool" {
 				// Convert OpenAI tool message to Claude tool_result format
-				
+
 				// Collect all consecutive tool messages
 				var toolResults []interface{}
 				for i < len(messages) {
@@ -476,17 +531,16 @@ func (h *ProxyHandler) transformOpenAIMessagesToClaude(messages []interface{}) [
 						if toolRole, _ := toolMsg["role"].(string); toolRole == "tool" {
 							toolCallID, _ := toolMsg["tool_call_id"].(string)
 							content := toolMsg["content"]
-							
+
 							// Convert call_ to toolu_ format
 							claudeToolID := "toolu_" + strings.TrimPrefix(toolCallID, "call_")
-							
+
 							toolResult := map[string]interface{}{
 								"type":        "tool_result",
 								"tool_use_id": claudeToolID,
 								"content":     content,
 							}
-							
-							
+
 							toolResults = append(toolResults, toolResult)
 							i++
 						} else {
@@ -496,7 +550,7 @@ func (h *ProxyHandler) transformOpenAIMessagesToClaude(messages []interface{}) [
 						break
 					}
 				}
-				
+
 				if len(toolResults) > 0 {
 					// Create user message with tool results
 					userMessage := map[string]interface{}{
@@ -532,13 +586,12 @@ func (h *ProxyHandler) transformOpenAIToolsToClaude(tools []interface{}) []inter
 						"name":        function["name"],
 						"description": function["description"],
 					}
-					
+
 					// Transform parameters to input_schema
 					if parameters, ok := function["parameters"]; ok {
 						claudeTool["input_schema"] = parameters
 					}
-					
-					
+
 					claudeTools = append(claudeTools, claudeTool)
 				}
 			} else {
@@ -554,6 +607,12 @@ func (h *ProxyHandler) transformOpenAIToolsToClaude(tools []interface{}) []inter
 func (h *ProxyHandler) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
 	// Remove Claude/Anthropic-specific fields that OpenAI/OpenRouter don't support
 	fieldsToRemove := []string{"cache_control"}
+	
+	// Remove metadata if store is not enabled (OpenAI requirement)
+	if store, hasStore := request["store"]; !hasStore || store != true {
+		fieldsToRemove = append(fieldsToRemove, "metadata")
+	}
+	
 	cleaned := h.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
 
 	// Handle tool_choice logic: only remove if no tools are present, tools is null, or tools is empty array
@@ -564,6 +623,346 @@ func (h *ProxyHandler) removeAnthropicSpecificFields(request map[string]interfac
 	}
 
 	return cleaned
+}
+
+// buildEndpointURL constructs the final endpoint URL for the provider
+func (h *ProxyHandler) buildEndpointURL(provider providers.Provider, baseURL, modelName string) string {
+	// Handle Gemini's special URL requirement
+	if provider.Name() == "gemini" {
+		// Extract actual model name from modelName (remove provider prefix if present)
+		actualModel := modelName
+		if parts := strings.SplitN(modelName, ",", 2); len(parts) > 1 {
+			actualModel = parts[1]
+		}
+		
+		// Gemini requires the model in the URL path
+		// Format: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+		if strings.HasSuffix(baseURL, "/models") {
+			return fmt.Sprintf("%s/%s:generateContent", baseURL, actualModel)
+		} else if strings.Contains(baseURL, "/models/") {
+			// Base URL already has a model specified, replace it
+			baseIndex := strings.LastIndex(baseURL, "/models/")
+			basePart := baseURL[:baseIndex+8] // Keep "/models/"
+			return fmt.Sprintf("%s%s:generateContent", basePart, actualModel)
+		}
+		// Fallback to appending the model
+		return fmt.Sprintf("%s/%s:generateContent", strings.TrimSuffix(baseURL, "/"), actualModel)
+	}
+	
+	// For all other providers, use the base URL as-is
+	return baseURL
+}
+
+// transformAnthropicToGemini converts Anthropic/Claude format to Gemini format
+func (h *ProxyHandler) transformAnthropicToGemini(requestBody []byte) ([]byte, error) {
+	var anthropicReq map[string]interface{}
+	if err := json.Unmarshal(requestBody, &anthropicReq); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
+	}
+
+	geminiReq := make(map[string]interface{})
+
+	// Handle system message and convert messages to contents
+	contents, err := h.convertAnthropicMessagesToGeminiContents(anthropicReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert messages: %w", err)
+	}
+	geminiReq["contents"] = contents
+
+	// Convert generation config
+	generationConfig := make(map[string]interface{})
+	
+	if maxTokens, ok := anthropicReq["max_tokens"].(float64); ok {
+		generationConfig["maxOutputTokens"] = int(maxTokens)
+	}
+	
+	if temperature, ok := anthropicReq["temperature"].(float64); ok {
+		generationConfig["temperature"] = temperature
+	}
+	
+	if topP, ok := anthropicReq["top_p"].(float64); ok {
+		generationConfig["topP"] = topP
+	}
+	
+	if topK, ok := anthropicReq["top_k"].(float64); ok {
+		generationConfig["topK"] = int(topK)
+	}
+
+	if len(generationConfig) > 0 {
+		geminiReq["generationConfig"] = generationConfig
+	}
+
+	// Convert tools
+	if tools, ok := anthropicReq["tools"].([]interface{}); ok && len(tools) > 0 {
+		geminiTools, err := h.convertAnthropicToolsToGemini(tools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert tools: %w", err)
+		}
+		geminiReq["tools"] = geminiTools
+	}
+
+	// Convert safety settings if needed
+	safetySettings := []map[string]interface{}{
+		{
+			"category":  "HARM_CATEGORY_HARASSMENT",
+			"threshold": "BLOCK_MEDIUM_AND_ABOVE",
+		},
+		{
+			"category":  "HARM_CATEGORY_HATE_SPEECH", 
+			"threshold": "BLOCK_MEDIUM_AND_ABOVE",
+		},
+		{
+			"category":  "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+			"threshold": "BLOCK_MEDIUM_AND_ABOVE",
+		},
+		{
+			"category":  "HARM_CATEGORY_DANGEROUS_CONTENT",
+			"threshold": "BLOCK_MEDIUM_AND_ABOVE",
+		},
+	}
+	geminiReq["safetySettings"] = safetySettings
+
+	return json.Marshal(geminiReq)
+}
+
+// convertAnthropicMessagesToGeminiContents converts Anthropic messages to Gemini contents format
+func (h *ProxyHandler) convertAnthropicMessagesToGeminiContents(anthropicReq map[string]interface{}) ([]interface{}, error) {
+	var contents []interface{}
+
+	// Handle system message first
+	if system, ok := anthropicReq["system"].(string); ok && system != "" {
+		systemContent := map[string]interface{}{
+			"role": "user",
+			"parts": []map[string]interface{}{
+				{
+					"text": "System: " + system,
+				},
+			},
+		}
+		contents = append(contents, systemContent)
+	}
+
+	// Convert messages
+	if messages, ok := anthropicReq["messages"].([]interface{}); ok {
+		for _, msg := range messages {
+			if msgMap, ok := msg.(map[string]interface{}); ok {
+				geminiContent, err := h.convertAnthropicMessageToGeminiContent(msgMap)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert message: %w", err)
+				}
+				if geminiContent != nil {
+					contents = append(contents, geminiContent)
+				}
+			}
+		}
+	}
+
+	return contents, nil
+}
+
+// convertAnthropicMessageToGeminiContent converts a single Anthropic message to Gemini content
+func (h *ProxyHandler) convertAnthropicMessageToGeminiContent(message map[string]interface{}) (map[string]interface{}, error) {
+	role, ok := message["role"].(string)
+	if !ok {
+		return nil, fmt.Errorf("message missing role")
+	}
+
+	// Map roles
+	var geminiRole string
+	switch role {
+	case "user":
+		geminiRole = "user"
+	case "assistant":
+		geminiRole = "model"
+	default:
+		return nil, fmt.Errorf("unsupported role: %s", role)
+	}
+
+	content := map[string]interface{}{
+		"role": geminiRole,
+	}
+
+	// Convert content array
+	if contentArray, ok := message["content"].([]interface{}); ok {
+		parts, err := h.convertAnthropicContentToGeminiParts(contentArray)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert content: %w", err)
+		}
+		content["parts"] = parts
+	} else if contentStr, ok := message["content"].(string); ok {
+		// Handle string content
+		content["parts"] = []map[string]interface{}{
+			{
+				"text": contentStr,
+			},
+		}
+	}
+
+	return content, nil
+}
+
+// convertAnthropicContentToGeminiParts converts Anthropic content blocks to Gemini parts
+func (h *ProxyHandler) convertAnthropicContentToGeminiParts(contentArray []interface{}) ([]interface{}, error) {
+	var parts []interface{}
+
+	for _, item := range contentArray {
+		if itemMap, ok := item.(map[string]interface{}); ok {
+			contentType, ok := itemMap["type"].(string)
+			if !ok {
+				continue
+			}
+
+			switch contentType {
+			case "text":
+				if text, ok := itemMap["text"].(string); ok {
+					parts = append(parts, map[string]interface{}{
+						"text": text,
+					})
+				}
+			case "tool_use":
+				// Convert tool use to function call
+				if name, ok := itemMap["name"].(string); ok {
+					functionCall := map[string]interface{}{
+						"name": name,
+					}
+					if input, ok := itemMap["input"].(map[string]interface{}); ok {
+						functionCall["args"] = input
+					}
+					parts = append(parts, map[string]interface{}{
+						"functionCall": functionCall,
+					})
+				}
+			case "tool_result":
+				// Convert tool result to function response
+				if _, ok := itemMap["tool_use_id"].(string); ok {
+					// Gemini expects function_response.response to be a structured object
+					// Convert string content to structured format
+					var responseContent interface{}
+					if content, ok := itemMap["content"]; ok {
+						if contentStr, isString := content.(string); isString {
+							// Wrap string content in an object structure
+							responseContent = map[string]interface{}{
+								"result": contentStr,
+							}
+						} else {
+							// If it's already structured, use as-is
+							responseContent = content
+						}
+					} else {
+						responseContent = map[string]interface{}{
+							"result": "",
+						}
+					}
+
+					functionResponse := map[string]interface{}{
+						"name":     "tool_result", // Generic name for tool results
+						"response": responseContent,
+					}
+					parts = append(parts, map[string]interface{}{
+						"functionResponse": functionResponse,
+					})
+				}
+			case "image":
+				// Handle image content if supported
+				if source, ok := itemMap["source"].(map[string]interface{}); ok {
+					if mediaType, ok := source["media_type"].(string); ok {
+						if data, ok := source["data"].(string); ok {
+							parts = append(parts, map[string]interface{}{
+								"inlineData": map[string]interface{}{
+									"mimeType": mediaType,
+									"data":     data,
+								},
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return parts, nil
+}
+
+// convertAnthropicToolsToGemini converts Anthropic tools to Gemini format
+func (h *ProxyHandler) convertAnthropicToolsToGemini(tools []interface{}) ([]interface{}, error) {
+	var geminiTools []interface{}
+
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]interface{}); ok {
+			if toolType, ok := toolMap["type"].(string); ok && toolType == "function" {
+				if function, ok := toolMap["function"].(map[string]interface{}); ok {
+					geminiFunction := map[string]interface{}{
+						"name": function["name"],
+					}
+					
+					if description, ok := function["description"].(string); ok {
+						geminiFunction["description"] = description
+					}
+
+					// Convert parameters schema
+					if parameters, ok := function["parameters"].(map[string]interface{}); ok {
+						geminiFunction["parameters"] = h.convertOpenAPISchemaToGemini(parameters)
+					}
+
+					geminiTool := map[string]interface{}{
+						"functionDeclarations": []interface{}{geminiFunction},
+					}
+					geminiTools = append(geminiTools, geminiTool)
+				}
+			}
+		}
+	}
+
+	return geminiTools, nil
+}
+
+// convertOpenAPISchemaToGemini converts OpenAPI schema to Gemini schema format
+func (h *ProxyHandler) convertOpenAPISchemaToGemini(schema map[string]interface{}) map[string]interface{} {
+	geminiSchema := make(map[string]interface{})
+
+	if schemaType, ok := schema["type"].(string); ok {
+		geminiSchema["type"] = strings.ToUpper(schemaType)
+	}
+
+	if description, ok := schema["description"].(string); ok {
+		geminiSchema["description"] = description
+	}
+
+	if properties, ok := schema["properties"].(map[string]interface{}); ok {
+		geminiProperties := make(map[string]interface{})
+		for key, prop := range properties {
+			if propMap, ok := prop.(map[string]interface{}); ok {
+				geminiProperties[key] = h.convertOpenAPISchemaToGemini(propMap)
+			}
+		}
+		geminiSchema["properties"] = geminiProperties
+	}
+
+	if required, ok := schema["required"].([]interface{}); ok {
+		geminiSchema["required"] = required
+	}
+
+	if items, ok := schema["items"].(map[string]interface{}); ok {
+		geminiSchema["items"] = h.convertOpenAPISchemaToGemini(items)
+	}
+
+	if enum, ok := schema["enum"].([]interface{}); ok {
+		geminiSchema["enum"] = enum
+	}
+
+	return geminiSchema
+}
+
+// setAuthHeader sets the appropriate authentication header for the provider
+func (h *ProxyHandler) setAuthHeader(req *http.Request, provider providers.Provider, apiKey string) {
+	switch provider.Name() {
+	case "gemini":
+		// Gemini uses x-goog-api-key header
+		req.Header.Set("x-goog-api-key", apiKey)
+	default:
+		// All other providers use Bearer token
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 }
 
 func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove []string) interface{} {
@@ -596,15 +995,15 @@ func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove 
 
 func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error) {
 	transformedTools := make([]interface{}, 0, len(tools))
-	
+
 	for i, tool := range tools {
-		
+
 		toolMap, ok := tool.(map[string]interface{})
 		if !ok {
 			h.logger.Warn("Skipping malformed tool", "index", i, "type", fmt.Sprintf("%T", tool))
 			continue // Skip malformed tools
 		}
-		
+
 		// Check if this is already in OpenAI format (has "type": "function" and "function" field)
 		if toolType, hasType := toolMap["type"].(string); hasType && toolType == "function" {
 			if _, hasFunction := toolMap["function"]; hasFunction {
@@ -613,26 +1012,26 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 				continue
 			}
 		}
-		
+
 		// Transform from Claude format to OpenAI format
 		// Claude tools might have: name, description, input_schema
 		// OpenAI tools need: type: "function", function: {name, description, parameters}
 		if name, hasName := toolMap["name"].(string); hasName {
-			
+
 			openAITool := map[string]interface{}{
 				"type": "function",
 				"function": map[string]interface{}{
 					"name": name,
 				},
 			}
-			
+
 			function := openAITool["function"].(map[string]interface{})
-			
+
 			// Add description if present
 			if description, hasDesc := toolMap["description"].(string); hasDesc {
 				function["description"] = description
 			}
-			
+
 			// Transform input_schema to parameters
 			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
 				function["parameters"] = inputSchema
@@ -642,16 +1041,16 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 			h.logger.Warn("Tool missing name field", "index", i, "tool", toolMap)
 		}
 	}
-	
+
 	return transformedTools, nil
 }
 
 func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
 	transformedMessages := make([]interface{}, 0, len(messages))
-	
+
 	for i, message := range messages {
 		if msgMap, ok := message.(map[string]interface{}); ok {
-			
+
 			// Check role-specific transformations
 			if role, ok := msgMap["role"].(string); ok {
 				if role == "user" {
@@ -674,7 +1073,7 @@ func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
 					}
 				}
 			}
-			
+
 			// Regular message transformation - remove cache_control
 			cleanedMessage := h.removeFieldsRecursively(msgMap, []string{"cache_control"})
 			transformedMessages = append(transformedMessages, cleanedMessage)
@@ -689,17 +1088,17 @@ func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
 func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex int) []interface{} {
 	var toolMessages []interface{}
 	var regularContent []interface{}
-	
+
 	for _, contentBlock := range content {
 		if blockMap, ok := contentBlock.(map[string]interface{}); ok {
 			if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_result" {
 				toolUseID, _ := blockMap["tool_use_id"].(string)
 				resultContent := blockMap["content"]
-				
-				h.logger.Info("Processing tool result", 
+
+				h.logger.Info("Processing tool result",
 					"tool_use_id", toolUseID,
 					"content_preview", h.truncateContent(resultContent, 100))
-				
+
 				// Convert Claude tool_use_id (toolu_*) to OpenAI tool_call_id (call_*)
 				// Handle malformed double-prefix cases
 				var openAIToolID string
@@ -707,7 +1106,7 @@ func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex in
 					// Malformed double prefix - extract the core ID
 					coreID := strings.TrimPrefix(toolUseID, "toolu_toolu_")
 					openAIToolID = "call_" + coreID
-					h.logger.Warn("Fixed malformed double toolu_ prefix", 
+					h.logger.Warn("Fixed malformed double toolu_ prefix",
 						"original_id", toolUseID,
 						"core_id", coreID,
 						"fixed_id", openAIToolID)
@@ -720,23 +1119,22 @@ func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex in
 					// Unknown format, add call_ prefix
 					openAIToolID = "call_" + toolUseID
 				}
-				
+
 				// Create OpenAI format tool message
 				toolMessage := map[string]interface{}{
 					"role":         "tool",
 					"tool_call_id": openAIToolID,
 					"content":      h.formatToolResultContent(resultContent),
 				}
-				
-				
+
 				// Validate ID format
 				if strings.Contains(openAIToolID, "toolu_") {
-					h.logger.Warn("Invalid tool_call_id format detected", 
+					h.logger.Warn("Invalid tool_call_id format detected",
 						"original_id", toolUseID,
 						"converted_id", openAIToolID,
 						"error", "tool_call_id should not contain toolu_ prefix")
 				}
-				
+
 				toolMessages = append(toolMessages, toolMessage)
 			} else {
 				// Regular content block
@@ -747,7 +1145,7 @@ func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex in
 			regularContent = append(regularContent, contentBlock)
 		}
 	}
-	
+
 	// If we found tool results, return them as separate messages
 	// If we also have regular content, add it as a user message after tool results
 	if len(toolMessages) > 0 {
@@ -760,7 +1158,7 @@ func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex in
 		}
 		return toolMessages
 	}
-	
+
 	// No tool results found
 	return nil
 }
@@ -770,7 +1168,7 @@ func (h *ProxyHandler) formatToolResultContent(content interface{}) string {
 	if str, ok := content.(string); ok {
 		return str
 	}
-	
+
 	// Handle array of content blocks (text/image)
 	if contentArray, ok := content.([]interface{}); ok {
 		var textParts []string
@@ -787,12 +1185,12 @@ func (h *ProxyHandler) formatToolResultContent(content interface{}) string {
 			return strings.Join(textParts, "\n")
 		}
 	}
-	
+
 	// Fallback: convert to JSON string
 	if jsonBytes, err := json.Marshal(content); err == nil {
 		return string(jsonBytes)
 	}
-	
+
 	return fmt.Sprintf("%v", content)
 }
 
@@ -809,11 +1207,11 @@ func (h *ProxyHandler) truncateContent(content interface{}, maxLen int) string {
 func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}, messageIndex int) map[string]interface{} {
 	var textContent strings.Builder
 	var toolCalls []interface{}
-	
+
 	for _, contentBlock := range content {
 		if blockMap, ok := contentBlock.(map[string]interface{}); ok {
 			blockType, _ := blockMap["type"].(string)
-			
+
 			switch blockType {
 			case "text":
 				// Extract text content
@@ -823,14 +1221,14 @@ func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, 
 			case "tool_use":
 				// Convert Claude tool_use to OpenAI tool_call format
 				toolUseID, _ := blockMap["id"].(string)
-				toolName, _ := blockMap["name"].(string) 
+				toolName, _ := blockMap["name"].(string)
 				toolInput := blockMap["input"]
-				
-				h.logger.Info("Processing tool use", 
+
+				h.logger.Info("Processing tool use",
 					"tool_id", toolUseID,
 					"tool_name", toolName,
 					"tool_input", toolInput)
-				
+
 				// Convert Claude tool_use_id (toolu_*) to OpenAI tool_call_id (call_*)
 				var openAIToolID string
 				if strings.HasPrefix(toolUseID, "toolu_") {
@@ -840,7 +1238,7 @@ func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, 
 				} else {
 					openAIToolID = "call_" + toolUseID
 				}
-				
+
 				// Convert input to JSON string format expected by OpenAI
 				var argumentsJSON string
 				if toolInput != nil {
@@ -852,7 +1250,7 @@ func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, 
 				} else {
 					argumentsJSON = "{}"
 				}
-				
+
 				// Create OpenAI tool_call format
 				toolCall := map[string]interface{}{
 					"id":   openAIToolID,
@@ -862,13 +1260,12 @@ func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, 
 						"arguments": argumentsJSON,
 					},
 				}
-				
-				
+
 				toolCalls = append(toolCalls, toolCall)
 			}
 		}
 	}
-	
+
 	// Only return transformed message if we found tool_use blocks
 	if len(toolCalls) > 0 {
 		result := map[string]interface{}{
@@ -876,15 +1273,15 @@ func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, 
 			"content":    textContent.String(),
 			"tool_calls": toolCalls,
 		}
-		
+
 		// If content is empty, set to null as expected by OpenAI format
 		if textContent.Len() == 0 {
 			result["content"] = nil
 		}
-		
+
 		return result
 	}
-	
+
 	// No tool_use blocks found, return nil to indicate no transformation needed
 	return nil
 }

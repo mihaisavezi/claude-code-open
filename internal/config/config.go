@@ -85,10 +85,10 @@ type Config struct {
 }
 
 type Manager struct {
-	baseDir      string
-	jsonPath     string
-	yamlPath     string
-	configValue  atomic.Value
+	baseDir     string
+	jsonPath    string
+	yamlPath    string
+	configValue atomic.Value
 }
 
 func NewManager(baseDir string) *Manager {
@@ -99,10 +99,35 @@ func NewManager(baseDir string) *Manager {
 	}
 }
 
+// createMinimalConfig creates a minimal configuration with all providers using CCO_API_KEY
+func (m *Manager) createMinimalConfig() Config {
+	return Config{
+		Host: DefaultHost,
+		Port: DefaultPort,
+		Providers: []Provider{
+			{Name: "openrouter"},
+			{Name: "openai"},
+			{Name: "anthropic"},
+			{Name: "nvidia"},
+			{Name: "gemini"},
+		},
+		Router: RouterConfig{
+			Default:     "openrouter,anthropic/claude-3.5-sonnet",
+			Think:       "openai,o1-preview",
+			Background:  "anthropic,claude-3-haiku-20240307",
+			LongContext: "anthropic,claude-3-5-sonnet-20241022",
+			WebSearch:   "openrouter,perplexity/llama-3.1-sonar-huge-128k-online",
+		},
+	}
+}
+
 func (m *Manager) Load() (*Config, error) {
 	var cfg Config
 	var err error
 
+	// Check if CCO_API_KEY is set - if so, we can run without a config file
+	ccoAPIKey := os.Getenv("CCO_API_KEY")
+	
 	// Try YAML first (takes precedence)
 	if _, yamlErr := os.Stat(m.yamlPath); yamlErr == nil {
 		cfg, err = m.loadYAML()
@@ -114,8 +139,11 @@ func (m *Manager) Load() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load JSON config: %w", err)
 		}
+	} else if ccoAPIKey != "" {
+		// No config file found, but CCO_API_KEY is set - create minimal config
+		cfg = m.createMinimalConfig()
 	} else {
-		return nil, fmt.Errorf("no configuration file found (looked for %s or %s)", m.yamlPath, m.jsonPath)
+		return nil, fmt.Errorf("no configuration file found (looked for %s or %s) and CCO_API_KEY environment variable not set", m.yamlPath, m.jsonPath)
 	}
 
 	// Apply defaults and validation
@@ -129,7 +157,7 @@ func (m *Manager) Load() (*Config, error) {
 
 func (m *Manager) loadYAML() (Config, error) {
 	var cfg Config
-	
+
 	data, err := os.ReadFile(m.yamlPath)
 	if err != nil {
 		return cfg, fmt.Errorf("read YAML config file: %w", err)
@@ -144,7 +172,7 @@ func (m *Manager) loadYAML() (Config, error) {
 
 func (m *Manager) loadJSON() (Config, error) {
 	var cfg Config
-	
+
 	data, err := os.ReadFile(m.jsonPath)
 	if err != nil {
 		return cfg, fmt.Errorf("read JSON config file: %w", err)
@@ -169,7 +197,7 @@ func (m *Manager) applyDefaults(cfg *Config) error {
 	// Apply provider defaults
 	for i := range cfg.Providers {
 		provider := &cfg.Providers[i]
-		
+
 		// Set default URL if not provided
 		if provider.APIBase == "" {
 			if defaultURL, exists := DefaultProviderURLs[provider.Name]; exists {

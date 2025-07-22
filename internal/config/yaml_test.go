@@ -44,7 +44,7 @@ router:
 
 	// Test providers
 	require.Len(t, cfg.Providers, 2)
-	
+
 	openrouter := cfg.Providers[0]
 	assert.Equal(t, "openrouter", openrouter.Name)
 	assert.Equal(t, "test-openrouter-key", openrouter.APIKey)
@@ -88,10 +88,10 @@ providers:
 
 	jsonPath := filepath.Join(tempDir, DefaultConfigFilename)
 	yamlPath := filepath.Join(tempDir, DefaultYAMLFilename)
-	
+
 	err := os.WriteFile(jsonPath, []byte(jsonConfig), 0644)
 	require.NoError(t, err)
-	
+
 	err = os.WriteFile(yamlPath, []byte(yamlConfig), 0644)
 	require.NoError(t, err)
 
@@ -162,10 +162,10 @@ func TestManager_CreateExampleYAML(t *testing.T) {
 	assert.Equal(t, DefaultHost, cfg.Host)
 	assert.Equal(t, DefaultPort, cfg.Port)
 	assert.Equal(t, "your-proxy-api-key-here", cfg.APIKey)
-	
+
 	// Should have all 5 providers
 	assert.Len(t, cfg.Providers, 5)
-	
+
 	providerNames := make([]string, len(cfg.Providers))
 	for i, p := range cfg.Providers {
 		providerNames[i] = p.Name
@@ -173,7 +173,7 @@ func TestManager_CreateExampleYAML(t *testing.T) {
 		assert.NotEmpty(t, p.APIBase, "Provider %s should have URL", p.Name)
 		assert.NotEmpty(t, p.DefaultModels, "Provider %s should have default models", p.Name)
 	}
-	
+
 	assert.Contains(t, providerNames, "openrouter")
 	assert.Contains(t, providerNames, "openai")
 	assert.Contains(t, providerNames, "anthropic")
@@ -191,7 +191,7 @@ func TestProvider_ModelWhitelist(t *testing.T) {
 		ModelWhitelist: []string{"claude", "gpt-4"},
 		DefaultModels: []string{
 			"anthropic/claude-3.5-sonnet",
-			"anthropic/claude-3-opus", 
+			"anthropic/claude-3-opus",
 			"openai/gpt-4-turbo",
 			"openai/gpt-3.5-turbo",
 			"meta-llama/llama-3.1-70b",

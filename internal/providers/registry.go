@@ -73,16 +73,16 @@ func (r *Registry) GetByDomain(apiBase string) (Provider, error) {
 
 	// Domain mapping to provider names
 	domainProviderMap := map[string]string{
-		"openrouter.ai":        "openrouter",
-		"api.openrouter.ai":    "openrouter",
-		"api.openai.com":       "openai",
-		"openai.com":           "openai",
-		"api.anthropic.com":    "anthropic",
-		"anthropic.com":        "anthropic",
-		"integrate.api.nvidia.com": "nvidia",
-		"api.nvidia.com":       "nvidia",
+		"openrouter.ai":                     "openrouter",
+		"api.openrouter.ai":                 "openrouter",
+		"api.openai.com":                    "openai",
+		"openai.com":                        "openai",
+		"api.anthropic.com":                 "anthropic",
+		"anthropic.com":                     "anthropic",
+		"integrate.api.nvidia.com":          "nvidia",
+		"api.nvidia.com":                    "nvidia",
 		"generativelanguage.googleapis.com": "gemini",
-		"googleapis.com":       "gemini",
+		"googleapis.com":                    "gemini",
 	}
 
 	if providerName, exists := domainProviderMap[domain]; exists {

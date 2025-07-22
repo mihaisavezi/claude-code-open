@@ -1,0 +1,232 @@
+version: '3'
+
+vars:
+  BINARY_NAME: cco
+  VERSION: 0.3.0
+  BUILD_DIR: build
+  MODULE_PATH: github.com/Davincible/claude-code-open
+
+env:
+  CGO_ENABLED: 0
+
+tasks:
+  default:
+    desc: Run format, test, and build
+    cmds:
+      - task: fmt
+      - task: test
+      - task: build
+
+  build:
+    desc: Build the binary
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -o {{.BINARY_NAME}} .
+    generates:
+      - "{{.BINARY_NAME}}"
+
+  build-all:
+    desc: Build binaries for all platforms
+    deps: [clean]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - task: build-linux-amd64
+      - task: build-linux-arm64
+      - task: build-darwin-amd64
+      - task: build-darwin-arm64
+      - task: build-windows-amd64
+
+  build-linux-amd64:
+    internal: true
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-amd64 .
+
+  build-linux-arm64:
+    internal: true
+    env:
+      GOOS: linux
+      GOARCH: arm64
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-linux-arm64 .
+
+  build-darwin-amd64:
+    internal: true
+    env:
+      GOOS: darwin
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-amd64 .
+
+  build-darwin-arm64:
+    internal: true
+    env:
+      GOOS: darwin
+      GOARCH: arm64
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-darwin-arm64 .
+
+  build-windows-amd64:
+    internal: true
+    env:
+      GOOS: windows
+      GOARCH: amd64
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -o {{.BUILD_DIR}}/{{.BINARY_NAME}}-windows-amd64.exe .
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  test-coverage:
+    desc: Run tests with coverage
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo 'Coverage report generated{{":"}} coverage.html'
+
+  fmt:
+    desc: Format code
+    cmds:
+      - gofmt -s -w .
+
+  lint:
+    desc: Run linter (requires golangci-lint)
+    cmds:
+      - |
+        if ! command -v golangci-lint &> /dev/null; then
+          echo "golangci-lint not installed"
+          exit 1
+        fi
+      - golangci-lint run
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - go clean
+      - rm -f {{.BINARY_NAME}}
+      - rm -rf {{.BUILD_DIR}}
+      - rm -f coverage.out coverage.html
+
+  deps:
+    desc: Download and tidy dependencies
+    cmds:
+      - go mod download
+      - go mod tidy
+
+  install:
+    desc: Install binary to system
+    deps: [build]
+    cmds:
+      - sudo cp {{.BINARY_NAME}} /usr/local/bin/{{.BINARY_NAME}}
+      - echo '{{.BINARY_NAME}} installed to /usr/local/bin'
+
+  uninstall:
+    desc: Remove binary from system
+    cmds:
+      - sudo rm -f /usr/local/bin/{{.BINARY_NAME}}
+      - echo '{{.BINARY_NAME}} removed from /usr/local/bin'
+
+  dev:
+    desc: Run in development mode with auto-reload
+    cmds:
+      - |
+        if ! command -v air &> /dev/null; then
+          echo "Installing air..."
+          go install github.com/cosmtrek/air@latest
+        fi
+      - echo "Starting development server with hot reload..."
+      - echo "The server will start automatically and reload on code changes"
+      - air
+
+  docker-build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t claude-code-open{{":"}}{{.VERSION}} .
+      - docker tag claude-code-open{{":"}}{{.VERSION}} claude-code-open{{":"}}latest
+
+  docker-run:
+    desc: Run Docker container
+    cmds:
+      - docker run --rm -p 6970{{":"}}6970 -v ~/.claude-code-open{{":"}}/root/.claude-code-open claude-code-open{{":"}}latest
+
+  release:
+    desc: Create release build
+    deps: [clean, fmt, test, build-all]
+    cmds:
+      - echo 'Release {{.VERSION}} built successfully'
+      - echo 'Binaries available in {{.BUILD_DIR}}/'
+
+  start:
+    desc: Start the service
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_NAME}} start
+
+  stop:
+    desc: Stop the service
+    cmds:
+      - ./{{.BINARY_NAME}} stop
+
+  status:
+    desc: Check service status
+    cmds:
+      - ./{{.BINARY_NAME}} status
+
+  config-generate:
+    desc: Generate example configuration
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_NAME}} config generate
+
+  config-validate:
+    desc: Validate configuration
+    deps: [build]
+    cmds:
+      - ./{{.BINARY_NAME}} config validate
+
+  benchmark:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  security:
+    desc: Run security audit (requires gosec)
+    cmds:
+      - |
+        if ! command -v gosec &> /dev/null; then
+          echo "Installing gosec..."
+          go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        fi
+      - gosec ./...
+
+  mod-update:
+    desc: Update all dependencies
+    cmds:
+      - go get -u ./...
+      - go mod tidy
+
+  docs:
+    desc: Generate documentation (requires godoc)
+    cmds:
+      - |
+        if ! command -v godoc &> /dev/null; then
+          echo "Installing godoc..."
+          go install golang.org/x/tools/cmd/godoc@latest
+        fi
+      - echo "Starting godoc server at http{{":"}}//localhost{{":"}}6060"
+      - godoc -http={{":"}}6060
+
+  profile:
+    desc: Build with profiling enabled
+    cmds:
+      - go build -ldflags="-s -w -X '{{.MODULE_PATH}}/cmd.Version={{.VERSION}}'" -tags profile -o {{.BINARY_NAME}}-profile .
+      - echo 'Profile-enabled binary built{{":"}} {{.BINARY_NAME}}-profile'
+
+  check:
+    desc: Run comprehensive checks
+    deps: [fmt, lint, test, security]
+    cmds:
+      - echo 'All checks passed!'

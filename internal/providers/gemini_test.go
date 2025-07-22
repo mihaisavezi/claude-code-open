@@ -10,10 +10,10 @@ import (
 
 func TestGeminiProvider_BasicMethods(t *testing.T) {
 	provider := NewGeminiProvider()
-	
+
 	assert.Equal(t, "gemini", provider.Name())
 	assert.True(t, provider.SupportsStreaming())
-	
+
 	provider.SetAPIKey("test-key")
 	assert.Equal(t, "test-key", provider.apiKey)
 }
@@ -210,7 +210,7 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 
 	toolBlock := content[0].(map[string]interface{})
 	assert.Equal(t, "tool_use", toolBlock["type"])
-	
+
 	id, ok := toolBlock["id"]
 	require.True(t, ok)
 	if idPtr, isPtr := id.(*string); isPtr {
@@ -218,9 +218,9 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 	} else {
 		assert.Contains(t, id.(string), "toolu_")
 	}
-	
+
 	name, ok := toolBlock["name"]
-	require.True(t, ok)  
+	require.True(t, ok)
 	if namePtr, isPtr := name.(*string); isPtr {
 		assert.Equal(t, "get_weather", *namePtr)
 	} else {
@@ -265,7 +265,7 @@ func TestGeminiProvider_ErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "error", anthropicResp["type"])
-	
+
 	errorInfo, ok := anthropicResp["error"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "authentication_error", errorInfo["type"])
@@ -312,7 +312,7 @@ func TestGeminiProvider_TransformStream(t *testing.T) {
 
 	// Test finish chunk
 	finishChunk := map[string]interface{}{
-		"responseId":   "gemini-response-123", 
+		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
 		"candidates": []map[string]interface{}{
 			{

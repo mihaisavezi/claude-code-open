@@ -28,6 +28,10 @@ func (p *NvidiaProvider) SupportsStreaming() bool {
 }
 
 func (p *NvidiaProvider) GetEndpoint() string {
+	if p.endpoint == "" {
+		return "https://integrate.api.nvidia.com/v1/chat/completions"
+	}
+
 	return p.endpoint
 }
 
@@ -466,11 +470,11 @@ func (p *NvidiaProvider) handleSingleToolCall(toolCall map[string]interface{}, s
 
 // NvidiaToolCallData holds parsed tool call information for Nvidia provider
 type NvidiaToolCallData struct {
-	Index       int
-	HasIndex    bool
-	ID          string
+	Index        int
+	HasIndex     bool
+	ID           string
 	FunctionName string
-	Arguments   string
+	Arguments    string
 }
 
 // parseToolCallData extracts tool call information from Nvidia chunk
@@ -522,11 +526,11 @@ func (p *NvidiaProvider) findOrCreateContentBlock(data NvidiaToolCallData, state
 	if data.ID != "" {
 		contentBlockIndex := len(state.ContentBlocks)
 		state.ContentBlocks[contentBlockIndex] = &ContentBlockState{
-			Type:           "tool_use",
-			ToolCallID:     data.ID,
-			ToolCallIndex:  data.Index,
-			ToolName:       data.FunctionName,
-			Arguments:      "",
+			Type:          "tool_use",
+			ToolCallID:    data.ID,
+			ToolCallIndex: data.Index,
+			ToolName:      data.FunctionName,
+			Arguments:     "",
 		}
 		return contentBlockIndex
 	}

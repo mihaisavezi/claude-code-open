@@ -9,7 +9,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/Davincible/claude-code-router-go/internal/config"
+	"github.com/Davincible/claude-code-open/internal/config"
 )
 
 var configCmd = &cobra.Command{
@@ -51,7 +51,7 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configValidateCmd)
 	configCmd.AddCommand(configGenerateCmd)
-	
+
 	// Add flags for generate command
 	configGenerateCmd.Flags().BoolP("force", "f", false, "Overwrite existing configuration file")
 }
@@ -108,14 +108,14 @@ func runConfigInit(cmd *cobra.Command, _ []string) error {
 	}
 
 	color.Green("Configuration saved successfully to: %s", cfgMgr.GetPath())
-	color.Cyan("You can now start the router with: ccr start")
+	color.Cyan("You can now start the router with: cco start")
 
 	return nil
 }
 
 func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if !cfgMgr.Exists() {
-		color.Yellow("No configuration found. Run 'ccr config init' or 'ccr config generate' to create one.")
+		color.Yellow("No configuration found. Run 'cco config init' or 'cco config generate' to create one.")
 		return nil
 	}
 
@@ -129,7 +129,7 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  %-15s: %d\n", "Port", cfg.Port)
 	fmt.Printf("  %-15s: %s\n", "API Key", maskString(cfg.APIKey))
 	fmt.Printf("  %-15s: %s\n", "Config Path", cfgMgr.GetPath())
-	
+
 	// Show config file type
 	configType := "JSON"
 	if cfgMgr.HasYAML() {
@@ -142,7 +142,7 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 		fmt.Printf("  - Name: %s\n", provider.Name)
 		fmt.Printf("    URL: %s\n", provider.APIBase)
 		fmt.Printf("    API Key: %s\n", maskString(provider.APIKey))
-		
+
 		if len(provider.DefaultModels) > 0 {
 			fmt.Printf("    Default Models: %v\n", provider.DefaultModels)
 		}
@@ -220,16 +220,16 @@ func runConfigValidate(cmd *cobra.Command, _ []string) error {
 
 func runConfigGenerate(cmd *cobra.Command, _ []string) error {
 	force, _ := cmd.Flags().GetBool("force")
-	
+
 	// Check if config already exists
 	if cfgMgr.Exists() && !force {
 		configType := "JSON"
 		if cfgMgr.HasYAML() {
 			configType = "YAML"
 		}
-		
+
 		color.Yellow("Configuration file already exists (%s format): %s", configType, cfgMgr.GetPath())
-		color.Cyan("Use --force to overwrite, or 'ccr config show' to view current config")
+		color.Cyan("Use --force to overwrite, or 'cco config show' to view current config")
 		return nil
 	}
 
@@ -242,9 +242,9 @@ func runConfigGenerate(cmd *cobra.Command, _ []string) error {
 	color.Cyan("\nNext steps:")
 	fmt.Println("1. Edit the configuration file to add your API keys")
 	fmt.Println("2. Customize provider settings and model whitelists as needed")
-	fmt.Println("3. Run 'ccr config validate' to check your configuration")
-	fmt.Println("4. Start the router with 'ccr start'")
-	
+	fmt.Println("3. Run 'cco config validate' to check your configuration")
+	fmt.Println("4. Start the router with 'cco start'")
+
 	color.Yellow("\nNote: The configuration includes all 5 supported providers:")
 	fmt.Println("- OpenRouter (access to multiple models)")
 	fmt.Println("- OpenAI (GPT models)")

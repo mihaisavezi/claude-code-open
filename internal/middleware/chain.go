@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/Davincible/claude-code-router-go/internal/config"
+	"github.com/Davincible/claude-code-open/internal/config"
 )
 
 // Middleware represents a middleware function

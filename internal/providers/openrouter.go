@@ -27,6 +27,10 @@ func (p *OpenRouterProvider) SupportsStreaming() bool {
 }
 
 func (p *OpenRouterProvider) GetEndpoint() string {
+	if p.endpoint == "" {
+		return "https://api.openrouter.ai/v1/chat/completions"
+	}
+
 	return p.endpoint
 }
 
@@ -134,7 +138,7 @@ func (p *OpenRouterProvider) convertContent(message map[string]interface{}) []ma
 		for _, toolCall := range toolCalls {
 			if tcMap, ok := toolCall.(map[string]interface{}); ok {
 				// Convert tool call to Claude format
-				
+
 				toolContent := p.convertToolCall(tcMap)
 				if toolContent != nil {
 					content = append(content, toolContent)
@@ -167,7 +171,7 @@ func (p *OpenRouterProvider) convertToolCall(toolCall map[string]interface{}) ma
 
 	// Parse arguments JSON
 	input := p.parseToolArguments(arguments)
-	
+
 	// Convert ID format: call_ -> toolu_
 	claudeID := p.convertToolCallID(toolCallID)
 
@@ -184,13 +188,13 @@ func (p *OpenRouterProvider) parseToolArguments(arguments string) map[string]int
 	if arguments == "" {
 		return map[string]interface{}{}
 	}
-	
+
 	var input map[string]interface{}
 	if err := json.Unmarshal([]byte(arguments), &input); err != nil {
 		// If parsing fails, use empty input
 		return map[string]interface{}{}
 	}
-	
+
 	return input
 }
 
@@ -446,11 +450,11 @@ func (p *OpenRouterProvider) handleSingleToolCall(toolCall map[string]interface{
 
 // ToolCallData holds parsed tool call information
 type ToolCallData struct {
-	Index       int
-	HasIndex    bool
-	ID          string
+	Index        int
+	HasIndex     bool
+	ID           string
 	FunctionName string
-	Arguments   string
+	Arguments    string
 }
 
 // parseToolCallData extracts tool call information from OpenRouter chunk
@@ -504,11 +508,11 @@ func (p *OpenRouterProvider) findOrCreateContentBlock(data ToolCallData, state *
 	if data.ID != "" {
 		contentBlockIndex := len(state.ContentBlocks)
 		state.ContentBlocks[contentBlockIndex] = &ContentBlockState{
-			Type:           "tool_use",
-			ToolCallID:     data.ID,
-			ToolCallIndex:  data.Index,
-			ToolName:       data.FunctionName,
-			Arguments:      "",
+			Type:          "tool_use",
+			ToolCallID:    data.ID,
+			ToolCallIndex: data.Index,
+			ToolName:      data.FunctionName,
+			Arguments:     "",
 		}
 		return contentBlockIndex
 	}

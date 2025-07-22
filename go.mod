@@ -1,4 +1,4 @@
-module github.com/Davincible/claude-code-router-go
+module github.com/Davincible/claude-code-open
 
 go 1.24.4
 

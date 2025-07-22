@@ -4,8 +4,8 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/Davincible/claude-code-router-go/internal/process"
-	"github.com/Davincible/claude-code-router-go/internal/server"
+	"github.com/Davincible/claude-code-open/internal/process"
+	"github.com/Davincible/claude-code-open/internal/server"
 )
 
 var startCmd = &cobra.Command{

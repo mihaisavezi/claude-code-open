@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Davincible/claude-code-router-go/internal/config"
+	"github.com/Davincible/claude-code-open/internal/config"
 )
 
 type AuthMiddleware struct {
@@ -26,7 +26,7 @@ func (am *AuthMiddleware) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := am.authenticate(r); err != nil {
 			am.logger.Error("Authentication failed", "error", err, "remote_addr", r.RemoteAddr)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			http.Error(w, "Proxy API key not authorized", http.StatusUnauthorized)
 			return
 		}
 

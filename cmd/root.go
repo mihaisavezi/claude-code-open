@@ -9,12 +9,13 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/Davincible/claude-code-router-go/internal/config"
+	"github.com/Davincible/claude-code-open/internal/config"
 )
 
 const (
-	AppName = "claude-code-router"
-	Version = "0.2.0"
+	AppName    = "claude-code-open"
+	OldAppName = "claude-code-router" // For backward compatibility
+	Version    = "0.3.0"
 )
 
 var (
@@ -31,7 +32,7 @@ func init() {
 	})
 	logger = slog.New(handler)
 
-	// Setup directories
+	// Setup directories with backward compatibility
 	var err error
 	homeDir, err = os.UserHomeDir()
 	if err != nil {
@@ -39,13 +40,13 @@ func init() {
 		os.Exit(1)
 	}
 
-	baseDir = filepath.Join(homeDir, "."+AppName)
+	baseDir = getConfigDirectory(homeDir)
 	cfgMgr = config.NewManager(baseDir)
 }
 
 var rootCmd = &cobra.Command{
-	Use:     "ccr",
-	Short:   "Claude Code Router - LLM Proxy Server",
+	Use:     "cco",
+	Short:   "Claude Code Open - LLM Proxy Server",
 	Long:    `A production-ready LLM proxy server that converts requests from various providers to Anthropic's Claude API format.`,
 	Version: Version,
 }
@@ -55,6 +56,52 @@ func Execute() {
 		logger.Error("Command execution failed", "error", err)
 		os.Exit(1)
 	}
+}
+
+// getConfigDirectory determines which config directory to use with backward compatibility
+func getConfigDirectory(homeDir string) string {
+	newDir := filepath.Join(homeDir, "."+AppName)
+	oldDir := filepath.Join(homeDir, "."+OldAppName)
+
+	// Check if old directory exists and has configuration files
+	oldExists := directoryHasConfig(oldDir)
+	newExists := directoryHasConfig(newDir)
+
+	if newExists {
+		// New directory exists and has config - use it
+		return newDir
+	}
+
+	if oldExists {
+		// Old directory exists with config - use it with a migration notice
+		color.Yellow("Using existing configuration directory: %s", oldDir)
+		color.Cyan("Consider migrating to the new directory: %s", newDir)
+		color.Cyan("You can do this by running: mv %s %s", oldDir, newDir)
+		return oldDir
+	}
+
+	// Neither exists - use new directory
+	return newDir
+}
+
+// directoryHasConfig checks if a directory exists and contains configuration files
+func directoryHasConfig(dir string) bool {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return false
+	}
+
+	// Check for common config files
+	yamlConfig := filepath.Join(dir, "config.yaml")
+	jsonConfig := filepath.Join(dir, "config.json")
+
+	if _, err := os.Stat(yamlConfig); err == nil {
+		return true
+	}
+	if _, err := os.Stat(jsonConfig); err == nil {
+		return true
+	}
+
+	return false
 }
 
 func init() {
@@ -88,6 +135,11 @@ func setupLogging(verbose, logFile bool) {
 
 func ensureConfigExists() error {
 	if !cfgMgr.Exists() {
+		// Check if CCO_API_KEY is set - if so, allow running without config file
+		if ccoAPIKey := os.Getenv("CCO_API_KEY"); ccoAPIKey != "" {
+			color.Green("No configuration file found, but CCO_API_KEY is set - using minimal configuration")
+			return nil
+		}
 		color.Yellow("Configuration not found, starting setup...")
 		return promptForConfig()
 	}
@@ -96,6 +148,6 @@ func ensureConfigExists() error {
 
 func promptForConfig() error {
 	// This will be implemented in the config command
-	fmt.Println("Please run 'ccr config init' to set up your configuration")
+	fmt.Println("Please run 'cco config init' to set up your configuration")
 	return fmt.Errorf("configuration required")
 }
