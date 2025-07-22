@@ -1,6 +1,10 @@
 # Claude Code Open
 
-A production-ready LLM proxy server that converts requests from various LLM providers to Anthropic's Claude API format. Built with Go for high performance and reliability.
+A wrapper around Claude Code that actually allows you to connect it to any other LLM provider. Contribute to add providers
+
+Production-ready LLM proxy server that converts requests from various LLM providers to Anthropic's Claude API format. Built with Go for high performance and reliability.
+
+This project is inspired by [Clude Code Router](https://github.com/musistudio/claude-code-router), the project was buggy and didn't work for me. This fixes that.
 
 ## Features
 
@@ -8,22 +12,15 @@ A production-ready LLM proxy server that converts requests from various LLM prov
   - **OpenRouter**: Access to multiple models from different providers
   - **OpenAI**: Direct access to GPT models (GPT-4, GPT-4-turbo, GPT-3.5, etc.)
   - **Anthropic**: Direct access to Claude models (Claude-3.5-Sonnet, Claude-3-Opus, Claude-3-Haiku)
-  - **Nvidia**: Access to Nemotron models via Nvidia's LLM API
+  - **Nvidia**: Access to Nemotron models via Nvidia's LLM API (bit buggy still)
   - **Google Gemini**: Access to Gemini models (Gemini-2.0-Flash, Gemini-1.5-Pro, etc.)
 - **Zero-Config Setup**: Run immediately with just `CCO_API_KEY` environment variable - no config file required
 - **YAML Configuration**: Modern YAML configuration with automatic defaults and model whitelists
 - **Dynamic Request Transformation**: Automatically converts requests from any supported provider format to Anthropic's Claude API format
 - **Dynamic Model Selection**: Support for explicit provider/model selection using comma notation (e.g., `openrouter,anthropic/claude-sonnet-4`)
-- **Streaming Support**: Full support for streaming responses with proper SSE formatting and tool calling
-- **Advanced Tool Calling**: Complete streaming tool call support with proper Claude SSE event generation across all providers
 - **Model Whitelisting**: Filter available models per provider using pattern matching
 - **Default Model Management**: Automatically populated model lists with smart defaults for each provider
 - **API Key Protection**: Optional proxy-level authentication for added security
-- **Error Transparency**: Upstream errors (status != 200) are forwarded without transformation to preserve original error details
-- **Modular Architecture**: Clean, extensible design that makes adding new providers straightforward
-- **Production Ready**: Comprehensive error handling, logging, and process management
-- **CLI Interface**: Intuitive command-line interface for easy management
-- **Process Management**: Automatic service lifecycle management with reference counting
 
 ## Quick Start
 
@@ -47,9 +44,12 @@ For the fastest setup, you can run without any configuration file using just the
 
 ```bash
 # Set your API key (works with any provider)
+# This is the API key of the provider you want to use, can be any one of the supported providers
+# Then in Claude Code you set the model with <provider>,<model name> e.g. openrouter,moonshotai/kimi-k2
 export CCO_API_KEY="your-api-key-here"
 
 # Start the router immediately - no config file needed!
+# Although you can create a config if you want to store your API keys for all providers. See cco config
 cco start
 
 # The API key will be used for whichever provider your model requests
@@ -60,7 +60,7 @@ cco start
 **How CCO_API_KEY works:**
 - **Single API Key**: Use one API key environment variable for all providers
 - **Provider Detection**: The key is automatically sent to the correct provider based on your model selection
-- **No Config Required**: Run immediately without creating any configuration files
+- **No Config Required**: Run immediately without creating any configuration files, although config file is an option
 - **Fallback Priority**: Provider-specific keys in config files take precedence over CCO_API_KEY
 
 ### Full Configuration (Optional)
@@ -99,13 +99,13 @@ cco config init
 Start the router service:
 
 ```bash
-cco start
+cco start  # For if you want to start the proxy server separately. 
 ```
 
 Use Claude Code with the router:
 
 ```bash
-cco code [claude-code-arguments]
+cco code [claude-code-arguments]  # You can also run this directly without starting the server first, it will auto start
 ```
 
 Check service status:
@@ -123,41 +123,6 @@ cco stop
 ## Dynamic Model Selection
 
 The router supports explicit provider and model selection using comma notation, which overrides all automatic routing logic:
-
-### Explicit Provider Selection
-
-Instead of relying on the configured routing rules, you can specify exactly which provider and model to use:
-
-```json
-{
-  "model": "openrouter,anthropic/claude-sonnet-4",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ]
-}
-```
-
-This format (`provider,model`) will:
-- Use the specified provider (must be configured in your config)
-- Use the exact model name with that provider
-- Bypass all automatic routing rules (long context, background, etc.)
-- Preserve model suffixes like `:online` for web search
-
-### Examples
-
-```json
-// Use OpenRouter with a specific Anthropic model
-{"model": "openrouter,anthropic/claude-sonnet-4"}
-
-// Use OpenRouter with web search enabled
-{"model": "openrouter,anthropic/claude-sonnet-4:online"}
-
-// Use OpenAI directly
-{"model": "openai,gpt-4o"}
-
-// Regular model name (uses automatic routing)
-{"model": "claude-3-5-sonnet"}
-```
 
 ### Automatic Routing (Fallback)
 
@@ -502,25 +467,6 @@ task install            # Install to system
 task release            # Create release build
 ```
 
-**Installation:**
-```bash
-# Install Task (if not already installed)
-go install github.com/go-task/task/v3/cmd/task@latest
-
-# Or use the Makefile equivalents
-make build, make test, etc.
-```
-
-### Dependencies
-
-Key dependencies:
-- `github.com/spf13/cobra` - CLI framework
-- `github.com/fatih/color` - Terminal colors
-- `github.com/pkoukk/tiktoken-go` - Token counting
-- `github.com/fsnotify/fsnotify` - Config file watching
-- `github.com/andybalholm/brotli` - Brotli compression
-- `gopkg.in/yaml.v3` - YAML configuration parsing
-
 ## Production Deployment
 
 ### Systemd Service (Linux)
@@ -549,22 +495,6 @@ sudo systemctl enable claude-code-open
 sudo systemctl start claude-code-open
 ```
 
-### Docker
-
-```dockerfile
-FROM golang:1.24-alpine AS builder
-
-WORKDIR /app
-COPY . .
-RUN go build -o cco .
-
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=builder /app/cco .
-CMD ["./cco", "start"]
-```
-
 ### Environment Variables
 
 The router respects these environment variables:
@@ -586,18 +516,6 @@ The `CCO_API_KEY` environment variable provides a simple way to use a single API
    - `openai,gpt-4o` → API key sent to OpenAI  
    - `anthropic,claude-3-haiku-20240307` → API key sent to Anthropic
 4. **Priority**: Provider-specific API keys in configuration files take precedence over `CCO_API_KEY`
-
-**Example Usage:**
-```bash
-# Use your OpenRouter API key for all requests
-export CCO_API_KEY="sk-or-v1-your-openrouter-key"
-cco start
-
-# Now all these requests will use your OpenRouter key:
-# - "openrouter,anthropic/claude-3.5-sonnet"
-# - "openrouter,openai/gpt-4o"  
-# - "openrouter,meta-llama/llama-3-70b"
-```
 
 ```bash
 # Use your OpenAI API key directly with OpenAI
@@ -667,21 +585,6 @@ This enables detailed logging of:
 - Provider selection logic
 - Token counting details
 - HTTP request/response details
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Code Style
-
-- Use `gofmt` for formatting
-- Follow Go naming conventions
-- Add tests for new features
-- Update documentation
 
 ## License
 
