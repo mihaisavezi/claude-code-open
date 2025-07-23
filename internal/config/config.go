@@ -149,9 +149,7 @@ func (m *Manager) Load() (*Config, error) {
 	}
 
 	// Apply defaults and validation
-	if err := m.applyDefaults(&cfg); err != nil {
-		return nil, fmt.Errorf("apply defaults: %w", err)
-	}
+	m.applyDefaults(&cfg)
 
 	m.configValue.Store(&cfg)
 
@@ -188,7 +186,7 @@ func (m *Manager) loadJSON() (Config, error) {
 	return cfg, nil
 }
 
-func (m *Manager) applyDefaults(cfg *Config) error {
+func (m *Manager) applyDefaults(cfg *Config) {
 	// Set basic defaults
 	if cfg.Port == 0 {
 		cfg.Port = DefaultPort
@@ -234,13 +232,13 @@ func (m *Manager) applyDefaults(cfg *Config) error {
 			provider.DefaultModels = filteredDefaults
 		}
 	}
-
-	return nil
 }
 
 func (m *Manager) Get() *Config {
 	if v := m.configValue.Load(); v != nil {
-		return v.(*Config)
+		if cfg, ok := v.(*Config); ok {
+			return cfg
+		}
 	}
 
 	cfg, err := m.Load()
@@ -256,7 +254,7 @@ func (m *Manager) Get() *Config {
 }
 
 func (m *Manager) Save(cfg *Config) error {
-	if err := os.MkdirAll(m.baseDir, 0755); err != nil {
+	if err := os.MkdirAll(m.baseDir, 0750); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
@@ -266,7 +264,7 @@ func (m *Manager) Save(cfg *Config) error {
 		return fmt.Errorf("marshal YAML config: %w", err)
 	}
 
-	if err := os.WriteFile(m.yamlPath, data, 0644); err != nil {
+	if err := os.WriteFile(m.yamlPath, data, 0600); err != nil {
 		return fmt.Errorf("write YAML config file: %w", err)
 	}
 
@@ -276,7 +274,7 @@ func (m *Manager) Save(cfg *Config) error {
 }
 
 func (m *Manager) SaveAsYAML(cfg *Config) error {
-	if err := os.MkdirAll(m.baseDir, 0755); err != nil {
+	if err := os.MkdirAll(m.baseDir, 0750); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
@@ -285,7 +283,7 @@ func (m *Manager) SaveAsYAML(cfg *Config) error {
 		return fmt.Errorf("marshal YAML config: %w", err)
 	}
 
-	if err := os.WriteFile(m.yamlPath, data, 0644); err != nil {
+	if err := os.WriteFile(m.yamlPath, data, 0600); err != nil {
 		return fmt.Errorf("write YAML config file: %w", err)
 	}
 
@@ -295,7 +293,7 @@ func (m *Manager) SaveAsYAML(cfg *Config) error {
 }
 
 func (m *Manager) SaveAsJSON(cfg *Config) error {
-	if err := os.MkdirAll(m.baseDir, 0755); err != nil {
+	if err := os.MkdirAll(m.baseDir, 0750); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
@@ -304,7 +302,7 @@ func (m *Manager) SaveAsJSON(cfg *Config) error {
 		return fmt.Errorf("marshal JSON config: %w", err)
 	}
 
-	if err := os.WriteFile(m.jsonPath, data, 0644); err != nil {
+	if err := os.WriteFile(m.jsonPath, data, 0600); err != nil {
 		return fmt.Errorf("write JSON config file: %w", err)
 	}
 
@@ -388,9 +386,7 @@ func (m *Manager) CreateExampleYAML() error {
 	}
 
 	// Apply defaults to populate URLs and default models
-	if err := m.applyDefaults(cfg); err != nil {
-		return fmt.Errorf("apply defaults: %w", err)
-	}
+	m.applyDefaults(cfg)
 
 	return m.SaveAsYAML(cfg)
 }

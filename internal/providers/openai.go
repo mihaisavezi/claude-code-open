@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 )
 
 type OpenAIProvider struct {
@@ -42,7 +41,7 @@ func (p *OpenAIProvider) SetAPIKey(key string) {
 func (p *OpenAIProvider) IsStreaming(headers map[string][]string) bool {
 	if contentType, ok := headers["Content-Type"]; ok {
 		for _, ct := range contentType {
-			if ct == "text/event-stream" || strings.Contains(ct, "stream") {
+			if ct == ContentTypeEventStream || strings.Contains(ct, "stream") {
 				return true
 			}
 		}
@@ -50,7 +49,7 @@ func (p *OpenAIProvider) IsStreaming(headers map[string][]string) bool {
 
 	if transferEncoding, ok := headers["Transfer-Encoding"]; ok {
 		for _, te := range transferEncoding {
-			if te == "chunked" {
+			if te == TransferEncodingChunked {
 				return true
 			}
 		}
@@ -74,58 +73,6 @@ func (p *OpenAIProvider) TransformStream(chunk []byte, state *StreamState) ([]by
 	return p.convertOpenAIToAnthropicStream(chunk, state)
 }
 
-// OpenAI format structures
-type openAIResponse struct {
-	ID                string         `json:"id"`
-	Object            string         `json:"object"`
-	Created           int64          `json:"created"`
-	Model             string         `json:"model"`
-	Choices           []openAIChoice `json:"choices"`
-	Usage             *openAIUsage   `json:"usage,omitempty"`
-	SystemFingerprint *string        `json:"system_fingerprint,omitempty"`
-	Error             *openAIError   `json:"error,omitempty"`
-}
-
-type openAIChoice struct {
-	Index        int            `json:"index"`
-	Message      *openAIMessage `json:"message,omitempty"`
-	Delta        *openAIMessage `json:"delta,omitempty"`
-	Logprobs     interface{}    `json:"logprobs,omitempty"`
-	FinishReason *string        `json:"finish_reason,omitempty"`
-}
-
-type openAIMessage struct {
-	Role         string           `json:"role"`
-	Content      *string          `json:"content,omitempty"`
-	Name         *string          `json:"name,omitempty"`
-	ToolCalls    []openAIToolCall `json:"tool_calls,omitempty"`
-	ToolCallId   *string          `json:"tool_call_id,omitempty"`
-	FunctionCall *openAIFunction  `json:"function_call,omitempty"`
-}
-
-type openAIToolCall struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Function openAIFunction `json:"function"`
-}
-
-type openAIFunction struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-type openAIUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
-
-type openAIError struct {
-	Message string  `json:"message"`
-	Type    string  `json:"type"`
-	Param   *string `json:"param,omitempty"`
-	Code    *string `json:"code,omitempty"`
-}
 
 // Anthropic format structures
 type anthropicResponse struct {
@@ -146,7 +93,7 @@ type anthropicContent struct {
 	ID        *string                `json:"id,omitempty"`
 	Name      *string                `json:"name,omitempty"`
 	Input     map[string]interface{} `json:"input,omitempty"`
-	ToolUseId *string                `json:"tool_use_id,omitempty"`
+	ToolUseID *string                `json:"tool_use_id,omitempty"`
 	Content   interface{}            `json:"content,omitempty"`
 	IsError   *bool                  `json:"is_error,omitempty"`
 }
@@ -164,154 +111,7 @@ type anthropicError struct {
 }
 
 func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, error) {
-	var openaiResp openAIResponse
-	if err := json.Unmarshal(openaiData, &openaiResp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal OpenAI response: %w", err)
-	}
-
-	// Handle error responses
-	if openaiResp.Error != nil {
-		anthropicResp := anthropicResponse{
-			ID:    openaiResp.ID,
-			Type:  "error",
-			Model: openaiResp.Model,
-			Error: &anthropicError{
-				Type:    p.mapOpenAIErrorType(openaiResp.Error.Type),
-				Message: openaiResp.Error.Message,
-			},
-		}
-
-		return json.Marshal(anthropicResp)
-	}
-
-	// Handle streaming vs non-streaming responses
-	if len(openaiResp.Choices) == 0 {
-		return nil, errors.New("no choices in OpenAI response")
-	}
-
-	choice := openaiResp.Choices[0]
-
-	message := choice.Message
-	if message == nil {
-		message = choice.Delta // Handle streaming responses
-	}
-
-	if message == nil {
-		return nil, errors.New("no message content in choice")
-	}
-
-	anthropicResp := anthropicResponse{
-		ID:    openaiResp.ID,
-		Type:  "message",
-		Role:  "assistant",
-		Model: openaiResp.Model,
-	}
-
-	// Convert content based on message type
-	content, err := p.convertMessageContent(message)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert message content: %w", err)
-	}
-
-	anthropicResp.Content = content
-
-	// Convert stop reason
-	if choice.FinishReason != nil {
-		anthropicResp.StopReason = p.convertStopReason(*choice.FinishReason)
-	}
-
-	// Convert usage
-	if openaiResp.Usage != nil {
-		usage := &anthropicUsage{
-			InputTokens:  openaiResp.Usage.PromptTokens,
-			OutputTokens: openaiResp.Usage.CompletionTokens,
-		}
-		anthropicResp.Usage = usage
-	}
-
-	return json.Marshal(anthropicResp)
-}
-
-func (p *OpenAIProvider) convertMessageContent(message *openAIMessage) ([]anthropicContent, error) {
-	var content []anthropicContent
-
-	// Handle regular text content
-	if message.Content != nil && *message.Content != "" {
-		content = append(content, anthropicContent{
-			Type: "text",
-			Text: message.Content,
-		})
-	}
-
-	// Handle tool calls
-	if len(message.ToolCalls) > 0 {
-		for _, toolCall := range message.ToolCalls {
-			var input map[string]interface{}
-			if toolCall.Function.Arguments != "" {
-				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &input); err != nil {
-					return nil, fmt.Errorf("failed to parse tool call arguments: %w", err)
-				}
-			}
-
-			claudeID := p.convertToolCallID(toolCall.ID)
-			content = append(content, anthropicContent{
-				Type:  "tool_use",
-				ID:    &claudeID,
-				Name:  &toolCall.Function.Name,
-				Input: input,
-			})
-		}
-	}
-
-	// Handle tool results
-	if message.Role == "tool" && message.ToolCallId != nil {
-		var toolContent interface{}
-
-		if message.Content != nil {
-			var jsonContent interface{}
-			if err := json.Unmarshal([]byte(*message.Content), &jsonContent); err == nil {
-				toolContent = jsonContent
-			} else {
-				toolContent = *message.Content
-			}
-		}
-
-		claudeToolID := p.convertToolCallID(*message.ToolCallId)
-		content = append(content, anthropicContent{
-			Type:      "tool_result",
-			ToolUseId: &claudeToolID,
-			Content:   toolContent,
-		})
-	}
-
-	// Handle legacy function calls
-	if message.FunctionCall != nil {
-		var input map[string]interface{}
-		if message.FunctionCall.Arguments != "" {
-			if err := json.Unmarshal([]byte(message.FunctionCall.Arguments), &input); err != nil {
-				return nil, fmt.Errorf("failed to parse function call arguments: %w", err)
-			}
-		}
-
-		id := fmt.Sprintf("func_%d", time.Now().UnixNano())
-		content = append(content, anthropicContent{
-			Type:  "tool_use",
-			ID:    &id,
-			Name:  &message.FunctionCall.Name,
-			Input: input,
-		})
-	}
-
-	// If no content was generated, add empty text block
-	if len(content) == 0 {
-		emptyText := ""
-		content = append(content, anthropicContent{
-			Type: "text",
-			Text: &emptyText,
-		})
-	}
-
-	return content, nil
+	return ConvertToAnthropic(openaiData, p.mapOpenAIErrorType, p.convertToolCallID)
 }
 
 func (p *OpenAIProvider) convertStopReason(openaiReason string) *string {
@@ -353,61 +153,7 @@ func (p *OpenAIProvider) mapOpenAIErrorType(openaiType string) string {
 }
 
 func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state *StreamState) ([]byte, error) {
-	var rawChunk map[string]interface{}
-	if err := json.Unmarshal(openaiData, &rawChunk); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal OpenAI streaming response: %w", err)
-	}
-
-	var events []byte
-
-	// Store message ID and model from first chunk
-	if id, ok := rawChunk["id"].(string); ok && state.MessageID == "" {
-		state.MessageID = id
-	}
-
-	if model, ok := rawChunk["model"].(string); ok && state.Model == "" {
-		state.Model = model
-	}
-
-	// Handle choices array
-	if choices, ok := rawChunk["choices"].([]interface{}); ok && len(choices) > 0 {
-		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
-			// Send message_start event if not sent yet
-			if !state.MessageStartSent {
-				messageStartEvent := p.createMessageStartEvent(state.MessageID, state.Model, rawChunk)
-				events = append(events, p.formatSSEEvent("message_start", messageStartEvent)...)
-				state.MessageStartSent = true
-			}
-
-			// Handle delta content
-			if delta, ok := firstChoice["delta"].(map[string]interface{}); ok {
-				// Initialize content blocks map if needed
-				if state.ContentBlocks == nil {
-					state.ContentBlocks = make(map[int]*ContentBlockState)
-				}
-
-				// Check if we have tool calls - if so, prioritize them over text content
-				if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
-					toolEvents := p.handleToolCalls(toolCalls, state)
-					events = append(events, toolEvents...)
-				} else if content, ok := delta["content"].(string); ok && content != "" {
-					// Only handle text content if no tool calls are present
-					textEvents := p.handleTextContent(content, state)
-					events = append(events, textEvents...)
-				}
-			}
-
-			// Handle finish_reason
-			if finishReason, ok := firstChoice["finish_reason"]; ok && finishReason != nil {
-				if reason, ok := finishReason.(string); ok {
-					finishEvents := p.handleFinishReason(reason, rawChunk, state)
-					events = append(events, finishEvents...)
-				}
-			}
-		}
-	}
-
-	return events, nil
+	return ConvertOpenAIStyleToAnthropicStream(openaiData, state, p, "OpenAI")
 }
 
 func (p *OpenAIProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
@@ -444,7 +190,10 @@ func (p *OpenAIProvider) createMessageStartEvent(messageID, model string, firstC
 }
 
 func (p *OpenAIProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
-	jsonData, _ := json.Marshal(data)
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return []byte("event: error\ndata: {\"error\":\"failed to marshal data\"}\n\n")
+	}
 	return []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(jsonData)))
 }
 
@@ -700,46 +449,13 @@ func (p *OpenAIProvider) createTextDeltaEvent(index int, text string) []byte {
 
 // handleFinishReason processes finish reasons and sends appropriate events
 func (p *OpenAIProvider) handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte {
-	var events []byte
-
-	// Send content_block_stop for all active content blocks
-	for index, contentBlock := range state.ContentBlocks {
-		if contentBlock.StartSent && !contentBlock.StopSent {
-			contentStopEvent := map[string]interface{}{
-				"type":  "content_block_stop",
-				"index": index,
-			}
-			events = append(events, p.formatSSEEvent("content_block_stop", contentStopEvent)...)
-			contentBlock.StopSent = true
+	return HandleFinishReason(p, reason, chunk, state, func(chunk map[string]interface{}) map[string]interface{} {
+		if usage, ok := chunk["usage"].(map[string]interface{}); ok {
+			return p.convertUsage(usage)
 		}
-	}
 
-	// Send message_delta with stop reason
-	messageDeltaEvent := map[string]interface{}{
-		"type": "message_delta",
-		"delta": map[string]interface{}{
-			"stop_reason":   p.convertStopReason(reason),
-			"stop_sequence": nil,
-		},
-	}
-
-	// Add usage if present
-	if usage, ok := chunk["usage"].(map[string]interface{}); ok {
-		usageData := p.convertUsage(usage)
-		if len(usageData) > 0 {
-			messageDeltaEvent["usage"] = usageData
-		}
-	}
-
-	events = append(events, p.formatSSEEvent("message_delta", messageDeltaEvent)...)
-
-	// Send message_stop
-	messageStopEvent := map[string]interface{}{
-		"type": "message_stop",
-	}
-	events = append(events, p.formatSSEEvent("message_stop", messageStopEvent)...)
-
-	return events
+		return nil
+	})
 }
 
 // convertUsage handles usage information conversion
@@ -772,60 +488,7 @@ func (p *OpenAIProvider) convertUsage(usage map[string]interface{}) map[string]i
 
 // transformAnthropicToOpenAI converts Anthropic/Claude format to OpenAI format for OpenAI
 func (p *OpenAIProvider) transformAnthropicToOpenAI(anthropicRequest []byte) ([]byte, error) {
-	var request map[string]interface{}
-	if err := json.Unmarshal(anthropicRequest, &request); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
-	}
-
-	// Remove Anthropic-specific fields that OpenAI doesn't support
-	cleanedRequest := p.removeAnthropicSpecificFields(request)
-
-	// Handle system parameter - convert it to a system message in messages array
-	if systemContent, hasSystem := cleanedRequest["system"]; hasSystem {
-		if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
-			// Create system message
-			systemMessage := map[string]interface{}{
-				"role":    "system",
-				"content": systemContent,
-			}
-
-			// Prepend system message to messages array
-			newMessages := append([]interface{}{systemMessage}, messages...)
-			cleanedRequest["messages"] = newMessages
-		}
-		// Remove the system parameter as OpenAI doesn't support it at root level
-		delete(cleanedRequest, "system")
-	}
-
-	// Handle max_tokens parameter - convert to max_completion_tokens for OpenAI compatibility
-	if maxTokens, hasMaxTokens := cleanedRequest["max_tokens"]; hasMaxTokens {
-		cleanedRequest["max_completion_tokens"] = maxTokens
-		delete(cleanedRequest, "max_tokens")
-	}
-
-	// Transform any Anthropic-specific message formats if needed
-	if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
-		cleanedRequest["messages"] = p.transformMessages(messages)
-	}
-
-	// Transform tools from Claude format to OpenAI format if present
-	if tools, ok := cleanedRequest["tools"].([]interface{}); ok {
-		transformedTools, err := p.transformTools(tools)
-		if err != nil {
-			// If tools transformation fails, remove tool_choice to prevent validation errors
-			delete(cleanedRequest, "tool_choice")
-		} else {
-			cleanedRequest["tools"] = transformedTools
-
-			// Re-validate tool_choice after successful transformation
-			// If transformed tools array is empty, remove tool_choice
-			if len(transformedTools) == 0 {
-				delete(cleanedRequest, "tool_choice")
-			}
-		}
-	}
-
-	return json.Marshal(cleanedRequest)
+	return TransformAnthropicToOpenAI(anthropicRequest, p)
 }
 
 // Helper methods for transformAnthropicToOpenAI (similar to OpenRouter)
@@ -881,44 +544,7 @@ func (p *OpenAIProvider) removeFieldsRecursively(data interface{}, fieldsToRemov
 }
 
 func (p *OpenAIProvider) transformTools(tools []interface{}) ([]interface{}, error) {
-	transformedTools := make([]interface{}, 0, len(tools))
-
-	for _, tool := range tools {
-		toolMap, ok := tool.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		if toolType, hasType := toolMap["type"].(string); hasType && toolType == "function" {
-			if _, hasFunction := toolMap["function"]; hasFunction {
-				transformedTools = append(transformedTools, tool)
-				continue
-			}
-		}
-
-		if name, hasName := toolMap["name"].(string); hasName {
-			openAITool := map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name": name,
-				},
-			}
-
-			function := openAITool["function"].(map[string]interface{})
-
-			if description, hasDesc := toolMap["description"].(string); hasDesc {
-				function["description"] = description
-			}
-
-			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
-				function["parameters"] = inputSchema
-			}
-
-			transformedTools = append(transformedTools, openAITool)
-		}
-	}
-
-	return transformedTools, nil
+	return TransformTools(tools)
 }
 
 func (p *OpenAIProvider) transformMessages(messages []interface{}) []interface{} {
@@ -935,7 +561,7 @@ func (p *OpenAIProvider) transformMessages(messages []interface{}) []interface{}
 							continue
 						}
 					}
-				} else if role == "assistant" {
+				} else if role == RoleAssistant {
 					if content, ok := msgMap["content"].([]interface{}); ok {
 						transformedMsg := p.transformAssistantMessage(msgMap, content)
 						transformedMessages = append(transformedMessages, transformedMsg)
@@ -958,12 +584,12 @@ func (p *OpenAIProvider) extractToolResults(content []interface{}) []interface{}
 	for _, block := range content {
 		if blockMap, ok := block.(map[string]interface{}); ok {
 			if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_result" {
-				if toolUseId, ok := blockMap["tool_use_id"].(string); ok {
-					toolCallId := strings.Replace(toolUseId, "toolu_", "call_", 1)
+				if toolUseID, ok := blockMap["tool_use_id"].(string); ok {
+					toolCallID := strings.Replace(toolUseID, "toolu_", "call_", 1)
 
 					toolMessage := map[string]interface{}{
 						"role":         "tool",
-						"tool_call_id": toolCallId,
+						"tool_call_id": toolCallID,
 						"content":      blockMap["content"],
 					}
 					toolMessages = append(toolMessages, toolMessage)
@@ -980,62 +606,5 @@ func (p *OpenAIProvider) extractToolResults(content []interface{}) []interface{}
 }
 
 func (p *OpenAIProvider) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}) map[string]interface{} {
-	transformedMsg := make(map[string]interface{})
-	for k, v := range msgMap {
-		transformedMsg[k] = v
-	}
-
-	var (
-		textContent strings.Builder
-		toolCalls   []interface{}
-	)
-
-	for _, block := range content {
-		if blockMap, ok := block.(map[string]interface{}); ok {
-			blockType, _ := blockMap["type"].(string)
-
-			switch blockType {
-			case "text":
-				if text, ok := blockMap["text"].(string); ok {
-					textContent.WriteString(text)
-				}
-			case "tool_use":
-				if id, ok := blockMap["id"].(string); ok {
-					if name, ok := blockMap["name"].(string); ok {
-						toolCallId := strings.Replace(id, "toolu_", "call_", 1)
-
-						var arguments string
-
-						if input := blockMap["input"]; input != nil {
-							if inputBytes, err := json.Marshal(input); err == nil {
-								arguments = string(inputBytes)
-							}
-						}
-
-						toolCall := map[string]interface{}{
-							"id":   toolCallId,
-							"type": "function",
-							"function": map[string]interface{}{
-								"name":      name,
-								"arguments": arguments,
-							},
-						}
-						toolCalls = append(toolCalls, toolCall)
-					}
-				}
-			}
-		}
-	}
-
-	if textContent.Len() > 0 {
-		transformedMsg["content"] = textContent.String()
-	} else {
-		transformedMsg["content"] = ""
-	}
-
-	if len(toolCalls) > 0 {
-		transformedMsg["tool_calls"] = toolCalls
-	}
-
-	return transformedMsg
+	return TransformAssistantMessage(msgMap, content)
 }

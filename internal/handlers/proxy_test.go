@@ -17,9 +17,6 @@ import (
 )
 
 func TestRemoveFieldsRecursively(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	handler := &ProxyHandler{logger: logger}
-
 	testData := map[string]interface{}{
 		"keep": "this",
 		"cache_control": map[string]interface{}{
@@ -43,7 +40,7 @@ func TestRemoveFieldsRecursively(t *testing.T) {
 		},
 	}
 
-	result, ok := handler.removeFieldsRecursively(testData, []string{"cache_control"}).(map[string]interface{})
+	result, ok := providers.RemoveFieldsRecursively(testData, []string{"cache_control"}).(map[string]interface{})
 	require.True(t, ok, "result should be a map")
 
 	// Check root level

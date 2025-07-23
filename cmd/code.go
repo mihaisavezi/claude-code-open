@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -54,7 +55,10 @@ func runCode(cmd *cobra.Command, args []string) error {
 		// Only stop service if we started it and no more references
 		if serviceStartedByUs && procMgr.ReadRef() == 0 {
 			color.Yellow("No more active sessions, stopping auto-started service...")
-			procMgr.Stop()
+
+			if err := procMgr.Stop(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error stopping process manager: %v\n", err)
+			}
 		}
 	}()
 

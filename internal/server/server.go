@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -51,8 +52,9 @@ func (s *Server) Start() error {
 	mux := s.setupRoutes()
 
 	s.server = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 30 * time.Second,
 	}
 
 	s.logger.Info("Starting server", "address", addr)
@@ -211,6 +213,10 @@ func (s *Server) tryNetstat(port int) int {
 
 // tryLsof attempts to find PID using lsof
 func (s *Server) tryLsof(port int) int {
+	// Validate port range for security
+	if port < 1 || port > 65535 {
+		return 0
+	}
 	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
 
 	output, err := cmd.Output()
@@ -299,6 +305,10 @@ func (s *Server) getProcessInfo(pid int) string {
 
 // getProcessInfoUnix gets process info on Unix-like systems
 func (s *Server) getProcessInfoUnix(pid int) string {
+	// Validate PID range for security
+	if pid < 1 || pid > 4194304 { // Max PID on most systems
+		return fmt.Sprintf("PID %d (invalid)", pid)
+	}
 	// Try ps command
 	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=")
 

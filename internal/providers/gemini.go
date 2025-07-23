@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -171,10 +172,7 @@ func (p *GeminiProvider) convertGeminiToAnthropic(geminiData []byte) ([]byte, er
 	}
 
 	// Convert content
-	content, err := p.convertGeminiContent(candidate.Content)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert content: %w", err)
-	}
+	content := p.convertGeminiContent(candidate.Content)
 
 	anthropicResp.Content = content
 
@@ -195,7 +193,7 @@ func (p *GeminiProvider) convertGeminiToAnthropic(geminiData []byte) ([]byte, er
 	return json.Marshal(anthropicResp)
 }
 
-func (p *GeminiProvider) convertGeminiContent(content *geminiContent) ([]anthropicContent, error) {
+func (p *GeminiProvider) convertGeminiContent(content *geminiContent) []anthropicContent {
 	if content == nil {
 		// Return empty text block if no content
 		emptyText := ""
@@ -203,7 +201,7 @@ func (p *GeminiProvider) convertGeminiContent(content *geminiContent) ([]anthrop
 		return []anthropicContent{{
 			Type: "text",
 			Text: &emptyText,
-		}}, nil
+		}}
 	}
 
 	var result []anthropicContent
@@ -233,7 +231,7 @@ func (p *GeminiProvider) convertGeminiContent(content *geminiContent) ([]anthrop
 			id := fmt.Sprintf("toolu_%s_%d", part.FunctionResponse.Name, time.Now().UnixNano())
 			result = append(result, anthropicContent{
 				Type:      "tool_result",
-				ToolUseId: &id,
+				ToolUseID: &id,
 				Content:   part.FunctionResponse.Response,
 			})
 		}
@@ -248,7 +246,7 @@ func (p *GeminiProvider) convertGeminiContent(content *geminiContent) ([]anthrop
 		})
 	}
 
-	return result, nil
+	return result
 }
 
 func (p *GeminiProvider) convertStopReason(geminiReason string) *string {
@@ -282,7 +280,7 @@ func (p *GeminiProvider) mapGeminiErrorType(geminiStatus string) string {
 		"PERMISSION_DENIED":  "permission_error",
 		"NOT_FOUND":          "not_found_error",
 		"RESOURCE_EXHAUSTED": "rate_limit_error",
-		"INTERNAL":           "api_error",
+		"INTERNAL":           MessageTypeAPIError,
 		"UNAVAILABLE":        "overloaded_error",
 		"DEADLINE_EXCEEDED":  "rate_limit_error",
 	}
@@ -291,7 +289,7 @@ func (p *GeminiProvider) mapGeminiErrorType(geminiStatus string) string {
 		return anthropicType
 	}
 
-	return "api_error"
+	return MessageTypeAPIError
 }
 
 func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state *StreamState) ([]byte, error) {
@@ -376,7 +374,11 @@ func (p *GeminiProvider) createMessageStartEvent(messageID, model string, firstC
 }
 
 func (p *GeminiProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
-	jsonData, _ := json.Marshal(data)
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return []byte("event: error\ndata: {\"error\":\"failed to marshal data\"}\n\n")
+	}
+
 	return []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", eventType, string(jsonData)))
 }
 
@@ -530,46 +532,13 @@ func (p *GeminiProvider) createInputDeltaEvent(index int, partialJSON string) []
 
 // handleFinishReason processes finish reasons and sends appropriate events
 func (p *GeminiProvider) handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte {
-	var events []byte
-
-	// Send content_block_stop for all active content blocks
-	for index, contentBlock := range state.ContentBlocks {
-		if contentBlock.StartSent && !contentBlock.StopSent {
-			contentStopEvent := map[string]interface{}{
-				"type":  "content_block_stop",
-				"index": index,
-			}
-			events = append(events, p.formatSSEEvent("content_block_stop", contentStopEvent)...)
-			contentBlock.StopSent = true
+	return HandleFinishReason(p, reason, chunk, state, func(chunk map[string]interface{}) map[string]interface{} {
+		if usageMetadata, ok := chunk["usageMetadata"].(map[string]interface{}); ok {
+			return p.convertUsage(usageMetadata)
 		}
-	}
 
-	// Send message_delta with stop reason
-	messageDeltaEvent := map[string]interface{}{
-		"type": "message_delta",
-		"delta": map[string]interface{}{
-			"stop_reason":   p.convertStopReason(reason),
-			"stop_sequence": nil,
-		},
-	}
-
-	// Add usage if present
-	if usageMetadata, ok := chunk["usageMetadata"].(map[string]interface{}); ok {
-		usageData := p.convertUsage(usageMetadata)
-		if len(usageData) > 0 {
-			messageDeltaEvent["usage"] = usageData
-		}
-	}
-
-	events = append(events, p.formatSSEEvent("message_delta", messageDeltaEvent)...)
-
-	// Send message_stop
-	messageStopEvent := map[string]interface{}{
-		"type": "message_stop",
-	}
-	events = append(events, p.formatSSEEvent("message_stop", messageStopEvent)...)
-
-	return events
+		return nil
+	})
 }
 
 // convertUsage handles usage information conversion
@@ -630,10 +599,7 @@ func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte,
 
 	// Convert tools
 	if tools, ok := anthropicReq["tools"].([]interface{}); ok && len(tools) > 0 {
-		geminiTools, err := p.convertAnthropicToolsToGemini(tools)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert tools: %w", err)
-		}
+		geminiTools := p.convertAnthropicToolsToGemini(tools)
 
 		geminiReq["tools"] = geminiTools
 	}
@@ -675,7 +641,7 @@ func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq m
 						"text": systemStr,
 					},
 				},
-				"role": "user",
+				"role": RoleUser,
 			}
 			contents = append(contents, systemContent)
 		}
@@ -716,10 +682,7 @@ func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]inte
 		// Array of content blocks
 		for _, block := range contentType {
 			if blockMap, ok := block.(map[string]interface{}); ok {
-				part, err := p.convertContentBlockToGeminiPart(blockMap)
-				if err != nil {
-					return nil, err
-				}
+				part := p.convertContentBlockToGeminiPart(blockMap)
 
 				if part != nil {
 					parts = append(parts, part)
@@ -731,7 +694,7 @@ func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]inte
 	}
 
 	// Convert role
-	geminiRole := "user"
+	geminiRole := RoleUser
 	if role == "assistant" {
 		geminiRole = "model"
 	}
@@ -742,7 +705,7 @@ func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]inte
 	}, nil
 }
 
-func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interface{}) (map[string]interface{}, error) {
+func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interface{}) map[string]interface{} {
 	blockType, _ := block["type"].(string)
 
 	switch blockType {
@@ -750,7 +713,7 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 		if text, ok := block["text"].(string); ok {
 			return map[string]interface{}{
 				"text": text,
-			}, nil
+			}
 		}
 	case "tool_use":
 		// Convert tool_use to function_call for Gemini
@@ -765,11 +728,11 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 
 			return map[string]interface{}{
 				"functionCall": functionCall,
-			}, nil
+			}
 		}
 	case "tool_result":
 		// Convert tool_result to function_response for Gemini
-		if toolUseId, ok := block["tool_use_id"].(string); ok {
+		if toolUseID, ok := block["tool_use_id"].(string); ok {
 			// Extract content and ensure it's a structured object for protobuf compatibility
 			var response interface{}
 
@@ -788,17 +751,17 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 
 			return map[string]interface{}{
 				"functionResponse": map[string]interface{}{
-					"name":     toolUseId, // Use tool_use_id as function name reference
+					"name":     toolUseID, // Use tool_use_id as function name reference
 					"response": response,  // Structured object instead of plain string
 				},
-			}, nil
+			}
 		}
 	}
 
-	return nil, nil
+	return nil
 }
 
-func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []interface{}) ([]interface{}, error) {
+func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []interface{}) []interface{} {
 	var geminiTools []interface{}
 
 	functionDeclarations := make([]interface{}, 0)
@@ -828,5 +791,5 @@ func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []interface{}) ([]i
 		geminiTools = append(geminiTools, geminiTool)
 	}
 
-	return geminiTools, nil
+	return geminiTools
 }

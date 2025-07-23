@@ -51,7 +51,10 @@ func (sbm *StatsigBlockerMiddleware) sendStatsigResponse(w http.ResponseWriter) 
 
 	// Send 202 Accepted with success response
 	w.WriteHeader(http.StatusAccepted)
-	w.Write([]byte(`{"success":true}`))
+
+	if _, err := w.Write([]byte(`{"success":true}`)); err != nil {
+		sbm.logger.Error("Failed to write statsig blocker response", "error", err)
+	}
 }
 
 func (sbm *StatsigBlockerMiddleware) isStatsigRequest(host, path string) bool {

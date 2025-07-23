@@ -17,13 +17,21 @@ var startCmd = &cobra.Command{
 
 func runStart(cmd *cobra.Command, _ []string) error {
 	// Setup logging
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	logFile, _ := cmd.Flags().GetBool("log-file")
+	verbose, err := cmd.Flags().GetBool("verbose")
+	if err != nil {
+		return err
+	}
+
+	logFile, err := cmd.Flags().GetBool("log-file")
+	if err != nil {
+		return err
+	}
+
 	setupLogging(verbose, logFile)
 
 	// Ensure configuration exists
-	if err := ensureConfigExists(); err != nil {
-		return err
+	if configErr := ensureConfigExists(); configErr != nil {
+		return configErr
 	}
 
 	// Load configuration

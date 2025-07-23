@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -65,28 +66,47 @@ func runConfigInit(cmd *cobra.Command, _ []string) error {
 	// Get provider details
 	fmt.Print("\nProvider Name (e.g., openrouter, openai): ")
 
-	providerName, _ := reader.ReadString('\n')
+	providerName, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("error reading provider name: %w", err)
+	}
+
 	providerName = strings.TrimSpace(providerName)
 
 	fmt.Print("API Key: ")
 
-	apiKey, _ := reader.ReadString('\n')
+	apiKey, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("error reading API key: %w", err)
+	}
+
 	apiKey = strings.TrimSpace(apiKey)
 
 	fmt.Print("API Base URL: ")
 
-	baseURL, _ := reader.ReadString('\n')
+	baseURL, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("error reading base URL: %w", err)
+	}
+
 	baseURL = strings.TrimSpace(baseURL)
 
 	fmt.Print("Default Model: ")
 
-	model, _ := reader.ReadString('\n')
+	model, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("error reading model: %w", err)
+	}
+
 	model = strings.TrimSpace(model)
 
 	// Optional router API key
 	fmt.Print("Router API Key (optional, for authentication): ")
 
-	routerAPIKey, _ := reader.ReadString('\n')
+	routerAPIKey, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("error reading router API key: %w", err)
+	}
 	routerAPIKey = strings.TrimSpace(routerAPIKey)
 
 	// Create configuration
@@ -198,34 +218,34 @@ func runConfigValidate(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Validation logic
-	var errors []string
+	var validationErrors []string
 
 	if len(cfg.Providers) == 0 {
-		errors = append(errors, "no providers configured")
+		validationErrors = append(validationErrors, "no providers configured")
 	}
 
 	for i, provider := range cfg.Providers {
 		if provider.Name == "" {
-			errors = append(errors, fmt.Sprintf("provider %d: name is required", i))
+			validationErrors = append(validationErrors, fmt.Sprintf("provider %d: name is required", i))
 		}
 
 		if provider.APIBase == "" {
-			errors = append(errors, fmt.Sprintf("provider %d: API base URL is required", i))
+			validationErrors = append(validationErrors, fmt.Sprintf("provider %d: API base URL is required", i))
 		}
 
 		if provider.APIKey == "" {
-			errors = append(errors, fmt.Sprintf("provider %d: API key is required", i))
+			validationErrors = append(validationErrors, fmt.Sprintf("provider %d: API key is required", i))
 		}
 	}
 
 	if cfg.Router.Default == "" {
-		errors = append(errors, "default router model is required")
+		validationErrors = append(validationErrors, "default router model is required")
 	}
 
-	if len(errors) > 0 {
+	if len(validationErrors) > 0 {
 		color.Red("Configuration validation failed:")
 
-		for _, err := range errors {
+		for _, err := range validationErrors {
 			fmt.Printf("  - %s\n", err)
 		}
 
@@ -238,7 +258,10 @@ func runConfigValidate(cmd *cobra.Command, _ []string) error {
 }
 
 func runConfigGenerate(cmd *cobra.Command, _ []string) error {
-	force, _ := cmd.Flags().GetBool("force")
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
 
 	// Check if config already exists
 	if cfgMgr.Exists() && !force {

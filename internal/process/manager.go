@@ -1,6 +1,7 @@
 package process
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,13 +36,13 @@ func (m *Manager) WritePID() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if err := os.MkdirAll(filepath.Dir(m.pidFile), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(m.pidFile), 0750); err != nil {
 		return fmt.Errorf("create pid directory: %w", err)
 	}
 
 	pid := strconv.Itoa(os.Getpid())
 
-	return os.WriteFile(m.pidFile, []byte(pid), 0644)
+	return os.WriteFile(m.pidFile, []byte(pid), 0600)
 }
 
 func (m *Manager) ReadPID() int {
@@ -53,7 +54,10 @@ func (m *Manager) ReadPID() int {
 		return 0
 	}
 
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0 // Invalid PID format
+	}
 
 	return pid
 }
@@ -100,7 +104,10 @@ func (m *Manager) CleanupPID() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	os.Remove(m.pidFile)
+	if err := os.Remove(m.pidFile); err != nil && !os.IsNotExist(err) {
+		// Log error only if file exists but can't be removed
+		fmt.Printf("Warning: failed to remove PID file: %v\n", err)
+	}
 }
 
 func (m *Manager) IncrementRef() {
@@ -122,7 +129,10 @@ func (m *Manager) ReadRef() int {
 		return 0
 	}
 
-	count, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	count, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0 // Invalid count format
+	}
 
 	return count
 }
@@ -131,14 +141,18 @@ func (m *Manager) writeRef(count int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	os.WriteFile(m.refFile, []byte(strconv.Itoa(count)), 0644)
+	if err := os.WriteFile(m.refFile, []byte(strconv.Itoa(count)), 0600); err != nil {
+		fmt.Printf("Warning: failed to write reference file: %v\n", err)
+	}
 }
 
 func (m *Manager) CleanupRef() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	os.Remove(m.refFile)
+	if err := os.Remove(m.refFile); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Warning: failed to remove reference file: %v\n", err)
+	}
 }
 
 func (m *Manager) WaitForService(timeout time.Duration) bool {

@@ -47,7 +47,10 @@ func (mbm *MetricsBlockerMiddleware) sendMetricsResponse(w http.ResponseWriter) 
 
 	// Send 200 OK with metrics-like response to match Claude Code's expected format
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"accepted_count":0,"rejected_count":0}`))
+
+	if _, err := w.Write([]byte(`{"accepted_count":0,"rejected_count":0}`)); err != nil {
+		mbm.logger.Error("Failed to write metrics blocker response", "error", err)
+	}
 }
 
 func (mbm *MetricsBlockerMiddleware) isMetricsRequest(host, path string) bool {
