@@ -17,7 +17,8 @@ All providers must implement the Provider interface:
 	type Provider interface {
 		Name() string
 		SupportsStreaming() bool
-		Transform(request []byte) ([]byte, error)
+		TransformRequest(request []byte) ([]byte, error)
+		TransformResponse(response []byte) ([]byte, error)
 		TransformStream(chunk []byte, state *StreamState) ([]byte, error)
 		IsStreaming(headers map[string][]string) bool
 		GetEndpoint() string
@@ -29,9 +30,9 @@ All providers must implement the Provider interface:
 ### Request Flow
 1. Client sends Claude-format request
 2. Router selects provider based on model name
-3. **Proxy handler transforms request**: Claude format → Provider format (including tool schema transformation)
+3. **Provider transforms request**: Claude format → Provider format using `TransformRequest()`
 4. HTTP request sent to provider
-5. **Provider transforms response**: Provider format → Claude format
+5. **Provider transforms response**: Provider format → Claude format using `TransformResponse()`
 6. Response sent back to client
 
 ### Content Formats
@@ -49,9 +50,9 @@ All providers must implement the Provider interface:
 - **Web Search**: OpenRouter annotations for search results
 - **Enhanced Usage**: Server tool use metrics, cache information
 
-### Request Transformation (Proxy Handler)
+### Request Transformation (Provider Interface)
 
-The proxy handler performs bidirectional transformations between Claude and provider formats:
+Each provider implements bidirectional transformations between Claude and provider formats:
 
 #### Tool Schema Transformation
 **Claude → OpenAI/OpenRouter:**
@@ -95,12 +96,13 @@ The proxy handler performs bidirectional transformations between Claude and prov
 
 ### Important Note: Request vs Response Transformation
 
-**Request Transformation** (Claude → Provider format) is handled by the **proxy handler** (`internal/handlers/proxy.go`), not by individual providers. This includes:
+**Request Transformation** (Claude → Provider format) is handled by **individual providers** using the `TransformRequest()` method. This includes:
 - Tool schema transformation (input_schema → parameters)
 - Field removal (cache_control, tool_choice validation)
 - Message format standardization
+- System message handling (Claude → Provider specific format)
 
-**Response Transformation** (Provider → Claude format) is handled by **individual providers**. This includes:
+**Response Transformation** (Provider → Claude format) is handled by **individual providers** using the `TransformResponse()` method. This includes:
 - Content structure conversion
 - Tool call format transformation
 - Usage metrics conversion
@@ -154,11 +156,29 @@ Implement IsStreaming to detect if a response is streamed:
 		return false
 	}
 
-### 3. Non-Streaming Response Transformation
+### 3. Request Transformation
 
-Implement Transform for complete responses (Provider → Claude format):
+Implement TransformRequest for converting Claude requests to provider format:
 
-	func (p *NewProvider) Transform(response []byte) ([]byte, error) {
+	func (p *NewProvider) TransformRequest(request []byte) ([]byte, error) {
+		var claudeRequest map[string]interface{}
+		if err := json.Unmarshal(request, &claudeRequest); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal Claude request: %w", err)
+		}
+
+		// Convert Claude format to provider format
+		providerRequest := p.convertFromClaude(claudeRequest)
+
+		return json.Marshal(providerRequest)
+	}
+
+Note: This method transforms Claude requests TO provider format.
+
+### 4. Response Transformation
+
+Implement TransformResponse for complete responses (Provider → Claude format):
+
+	func (p *NewProvider) TransformResponse(response []byte) ([]byte, error) {
 		var providerResponse map[string]interface{}
 		if err := json.Unmarshal(response, &providerResponse); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal provider response: %w", err)
@@ -170,10 +190,9 @@ Implement Transform for complete responses (Provider → Claude format):
 		return json.Marshal(claudeResponse)
 	}
 
-Note: This method transforms provider responses TO Claude format. Request transformation
-(Claude → Provider) is handled automatically by the proxy handler.
+Note: This method transforms provider responses TO Claude format.
 
-### 4. Streaming Response Transformation
+### 5. Streaming Response Transformation
 
 Implement TransformStream for real-time chunk processing (Provider → Claude format):
 
@@ -195,7 +214,7 @@ Implement TransformStream for real-time chunk processing (Provider → Claude fo
 	}
 
 Note: This method transforms provider streaming responses TO Claude format. Request
-transformation (including tool schema) is handled automatically by the proxy handler.
+transformation (including tool schema) is handled by the TransformRequest method.
 
 ## Streaming Implementation Details
 
@@ -454,22 +473,16 @@ Generate events in Claude's expected format:
 
 ### Unit Tests Required
 
-#### Provider Tests (Response Transformation)
+#### Provider Tests (Both Request and Response Transformation)
 1. **Basic Methods**: Name, SupportsStreaming, etc.
-2. **Non-Streaming Transform**: Complete response conversion
-3. **Tool Calls Transform**: Tool call conversion and ID mapping
-4. **Web Search Annotations**: Annotation and server tool use preservation
-5. **Streaming Transform**: Chunk-by-chunk conversion with tool calls
-6. **Streaming State**: Multiple content blocks, tool calls
-7. **Stop Reason Mapping**: All provider-specific stop reasons
-8. **Error Cases**: Malformed input, missing fields
-
-#### Proxy Handler Tests (Request Transformation)
-1. **Tool Schema Transform**: Claude format → OpenAI/OpenRouter format
-2. **Tool Choice Validation**: Removal when no/empty tools, preservation when valid
-3. **Field Removal**: cache_control and other Claude-specific fields
-4. **Message Transform**: Claude message format handling
-5. **Error Forwarding**: Upstream error preservation
+2. **Request Transform**: Claude format → Provider format conversion
+3. **Response Transform**: Provider format → Claude format conversion
+4. **Tool Calls Transform**: Tool call conversion and ID mapping
+5. **Web Search Annotations**: Annotation and server tool use preservation
+6. **Streaming Transform**: Chunk-by-chunk conversion with tool calls
+7. **Streaming State**: Multiple content blocks, tool calls
+8. **Stop Reason Mapping**: All provider-specific stop reasons
+9. **Error Cases**: Malformed input, missing fields
 
 ### Test Data
 - Use real examples from provider documentation
@@ -521,32 +534,28 @@ Add domain mapping for automatic provider selection:
 
 See existing implementations for detailed examples:
 
-### Provider Examples (Response Transformation)
-- **OpenRouter** (`openrouter.go`): Full implementation with tool calling
+### Provider Examples (Request and Response Transformation)
+- **OpenRouter** (`openrouter.go`): Full implementation with bidirectional transformation and tool calling
 - **OpenAI** (`openai.go`): Similar to OpenRouter with minor differences
-- **Anthropic** (`anthropic.go`): Pass-through implementation
+- **Gemini** (`gemini.go`): Different API format requiring custom transformation
+- **Nvidia** (`nvidia.go`): OpenAI-compatible format with minor variations
+- **Anthropic** (`anthropic.go`): Pass-through implementation for requests, identity transformation
 
 The OpenRouter provider is the most complete reference implementation,
 including comprehensive streaming tool call support, web search annotations,
-and enhanced usage information handling with server tool use metrics.
-
-### Proxy Handler (Request Transformation)
-- **Proxy Handler** (`internal/handlers/proxy.go`): Complete request transformation pipeline
-  - `transformAnthropicToOpenAI()`: Main transformation function
-  - `transformTools()`: Tool schema transformation (Claude → OpenAI format)
-  - `removeAnthropicSpecificFields()`: Field removal and tool_choice validation
-  - Comprehensive test coverage in `proxy_test.go`
+enhanced usage information handling with server tool use metrics, and full
+bidirectional transformation between Claude and OpenAI formats.
 
 ## Common Issues and Solutions
 
 ### "tool_choice may only be specified while providing tools"
 **Cause**: Claude Code sends `tool_choice` with empty/missing tools array
-**Solution**: Proxy handler automatically removes `tool_choice` when tools are invalid
+**Solution**: Provider `TransformRequest()` method automatically removes `tool_choice` when tools are invalid
 **Prevention**: Always validate tool_choice/tools relationship in request transformation
 
 ### Tool Schema Mismatch
 **Cause**: Claude uses `input_schema`, OpenAI/OpenRouter use `parameters`
-**Solution**: Proxy handler transforms `input_schema` → `parameters` automatically
+**Solution**: Provider `TransformRequest()` method transforms `input_schema` → `parameters` automatically
 **Prevention**: Ensure tool definitions follow Claude format in client requests
 
 ### Empty Tool Parameters in Streaming (OpenRouter)

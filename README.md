@@ -152,7 +152,8 @@ The router uses a modular provider system where each provider implements the `Pr
 type Provider interface {
     Name() string
     SupportsStreaming() bool
-    Transform(request []byte) ([]byte, error)
+    TransformRequest(request []byte) ([]byte, error)
+    TransformResponse(response []byte) ([]byte, error)
     TransformStream(chunk []byte, state *StreamState) ([]byte, error)
     IsStreaming(headers map[string][]string) bool
     GetEndpoint() string
@@ -166,9 +167,9 @@ type Provider interface {
 2. Router authenticates request (if API key configured)
 3. Router selects appropriate model based on routing configuration
 4. Router identifies provider based on configuration
-5. Request is transformed by provider-specific transformer
+5. Provider transforms request from Claude format to provider format using `TransformRequest()`
 6. Router proxies request to upstream provider
-7. Response is transformed back to Claude format
+7. Provider transforms response from provider format back to Claude format using `TransformResponse()`
 8. Router streams response to client
 
 ## Configuration
@@ -332,12 +333,16 @@ To add support for a new LLM provider:
        apiKey   string
    }
    
-   func (p *NewProvider) Transform(request []byte) ([]byte, error) {
-       // Implement request transformation logic
+   func (p *NewProvider) TransformRequest(request []byte) ([]byte, error) {
+       // Implement Claude → Provider format transformation
+   }
+   
+   func (p *NewProvider) TransformResponse(response []byte) ([]byte, error) {
+       // Implement Provider → Claude format transformation
    }
    
    func (p *NewProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
-       // Implement streaming transformation logic
+       // Implement streaming response transformation (Provider → Claude format)
    }
    ```
 
