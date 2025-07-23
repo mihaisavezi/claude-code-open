@@ -10,6 +10,8 @@
 
 **Production-ready LLM proxy server** that converts requests from various LLM providers to Anthropic's Claude API format. Built with Go for high performance and reliability.
 
+As simple as `CCO_API_KEY="<open router key>" cco code` and then selecting `openrouter,qwen/qwen3-coder` as model and voila
+
 ---
 
 *Inspired by [Claude Code Router](https://github.com/musistudio/claude-code-router) but rebuilt from the ground up to actually work reliably.*
