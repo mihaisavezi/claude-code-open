@@ -150,7 +150,7 @@ export CCO_API_KEY="your-api-key-here"
 cco start  # or claude-code-open start
 
 # The API key will be used for whichever provider your model requests
-# e.g., if you use "openrouter,anthropic/claude-3.5-sonnet" -> key goes to OpenRouter
+# e.g., if you use "openrouter,anthropic/claude-sonnet-4" -> key goes to OpenRouter
 # e.g., if you use "openai,gpt-4o" -> key goes to OpenAI
 ```
 
@@ -365,11 +365,11 @@ providers:
 
 # Router configuration for different use cases
 router:
-  default: openrouter/anthropic/claude-3.5-sonnet
-  think: openai/o1-preview
-  long_context: anthropic/claude-3-5-sonnet-20241022
-  background: anthropic/claude-3-haiku-20240307
-  web_search: openrouter/perplexity/llama-3.1-sonar-huge-128k-online
+  default: openrouter,anthropic/claude-sonnet-4
+  think: openai,o1-preview
+  long_context: anthropic,claude-sonnet-4
+  background: anthropic,claude-3-haiku-20240307
+  web_search: openrouter,perplexity/llama-3.1-sonar-huge-128k-online
 ```
 
 ### 📜 Legacy JSON Format
@@ -391,16 +391,16 @@ The router still supports JSON configuration for backward compatibility:
       "name": "openrouter",
       "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
       "api_key": "your-provider-api-key",
-      "models": ["anthropic/claude-3.5-sonnet"],
+      "models": ["anthropic/claude-sonnet-4"],
       "model_whitelist": ["claude", "gpt-4"],
-      "default_models": ["anthropic/claude-3.5-sonnet"]
+      "default_models": ["anthropic/claude-sonnet-4"]
     }
   ],
   "Router": {
-    "default": "openrouter,anthropic/claude-3.5-sonnet",
-    "think": "openrouter,anthropic/claude-3.5-sonnet", 
-    "longContext": "openrouter,anthropic/claude-3.5-sonnet-20241022",
-    "background": "openrouter,anthropic/claude-3.5-haiku",
+    "default": "openrouter,anthropic/claude-sonnet-4",
+    "think": "openrouter,anthropic/claude-sonnet-4", 
+    "longContext": "openrouter,anthropic/claude-sonnet-4",
+    "background": "openrouter,anthropic/claude-3-5-haiku",
     "webSearch": "openrouter,perplexity/llama-3.1-sonar-large-128k-online"
   }
 }
@@ -448,7 +448,7 @@ The router still supports JSON configuration for backward compatibility:
 </tr>
 </table>
 
-> **Format**: `provider_name/model_name` (e.g., `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`)
+> **Format**: `provider_name,model_name` (e.g., `openai,gpt-4o`, `anthropic,claude-sonnet-4`)
 
 ## 💻 Commands
 
