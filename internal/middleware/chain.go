@@ -30,6 +30,7 @@ func (c Chain) Handler(handler http.Handler) http.Handler {
 	for i := len(c.middlewares) - 1; i >= 0; i-- {
 		handler = c.middlewares[i](handler)
 	}
+
 	return handler
 }
 

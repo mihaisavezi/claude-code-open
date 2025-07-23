@@ -59,6 +59,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	finalBody, err := provider.TransformRequest(transformedBody)
 	if err != nil {
 		h.logger.Warn("Request transformation failed, using original", "error", err)
+
 		finalBody = transformedBody
 	}
 
@@ -71,7 +72,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Build final endpoint URL (handle special cases like Gemini)
 	finalURL := h.buildEndpointURL(provider, providerConfig.APIBase, modelName)
-	
+
 	// Create upstream request
 	req, err := http.NewRequest(r.Method, finalURL, strings.NewReader(string(finalBody)))
 	if err != nil {
@@ -115,6 +116,7 @@ func (h *ProxyHandler) handleStreamingResponse(w http.ResponseWriter, resp *http
 		h.httpError(w, http.StatusBadGateway, "decompression error: %v", err)
 		return
 	}
+
 	if closer, ok := bodyReader.(io.Closer); ok {
 		defer closer.Close()
 	}
@@ -131,6 +133,7 @@ func (h *ProxyHandler) handleStreamingResponse(w http.ResponseWriter, resp *http
 
 	// For error responses, capture and print the body
 	var errorBodyLines []string
+
 	captureError := resp.StatusCode != http.StatusOK
 
 	// Create scanner and state
@@ -149,6 +152,7 @@ func (h *ProxyHandler) handleStreamingResponse(w http.ResponseWriter, resp *http
 		if line == "" {
 			fmt.Fprint(w, "\n")
 			h.flushResponse(w)
+
 			continue
 		}
 
@@ -160,6 +164,7 @@ func (h *ProxyHandler) handleStreamingResponse(w http.ResponseWriter, resp *http
 		if line == "data: [DONE]" {
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			h.flushResponse(w)
+
 			break
 		}
 
@@ -214,6 +219,7 @@ func (h *ProxyHandler) handleResponse(w http.ResponseWriter, resp *http.Response
 		h.httpError(w, http.StatusBadGateway, "decompression error: %v", err)
 		return
 	}
+
 	if closer, ok := bodyReader.(io.Closer); ok {
 		defer closer.Close()
 	}
@@ -236,6 +242,7 @@ func (h *ProxyHandler) handleResponse(w http.ResponseWriter, resp *http.Response
 		transformedBody, err := provider.TransformResponse(respBody)
 		if err != nil {
 			h.logger.Warn("Response transformation failed, using original", "error", err)
+
 			finalBody = respBody
 		} else {
 			finalBody = transformedBody
@@ -254,6 +261,7 @@ func (h *ProxyHandler) handleResponse(w http.ResponseWriter, resp *http.Response
 func (h *ProxyHandler) findProvider(modelName string, cfg *config.Config) (providers.Provider, *config.Provider, error) {
 	// Parse provider name from model (format: "provider,model" or just "model")
 	parts := strings.SplitN(modelName, ",", 2)
+
 	var providerName string
 	if len(parts) > 1 {
 		providerName = parts[0]
@@ -261,6 +269,7 @@ func (h *ProxyHandler) findProvider(modelName string, cfg *config.Config) (provi
 
 	// Find provider config
 	var providerConfig *config.Provider
+
 	for i, p := range cfg.Providers {
 		if p.Name == providerName {
 			providerConfig = &cfg.Providers[i]
@@ -300,6 +309,7 @@ func (h *ProxyHandler) findProvider(modelName string, cfg *config.Config) (provi
 	if apiKey == "" {
 		if ccoAPIKey := os.Getenv("CCO_API_KEY"); ccoAPIKey != "" {
 			apiKey = ccoAPIKey
+
 			h.logger.Debug("Using CCO_API_KEY for provider", "provider", provider.Name())
 		}
 
@@ -372,11 +382,13 @@ func (h *ProxyHandler) countInputTokens(text string) int {
 		h.logger.Error("Failed to get tiktoken encoding", "error", err)
 		return 0
 	}
+
 	return len(tke.Encode(text, nil, nil))
 }
 
 func (h *ProxyHandler) decompressReader(resp *http.Response) (io.Reader, error) {
 	var bodyReader io.Reader = resp.Body
+
 	encoding := resp.Header.Get("Content-Encoding")
 
 	switch encoding {
@@ -385,6 +397,7 @@ func (h *ProxyHandler) decompressReader(resp *http.Response) (io.Reader, error) 
 		if err != nil {
 			return nil, err
 		}
+
 		bodyReader = gzipReader
 	case "br":
 		bodyReader = brotli.NewReader(resp.Body)
@@ -399,6 +412,7 @@ func (h *ProxyHandler) copyHeaders(w http.ResponseWriter, resp *http.Response) {
 		if key == "Content-Encoding" || key == "Content-Length" {
 			continue
 		}
+
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
@@ -417,7 +431,6 @@ func (h *ProxyHandler) httpError(w http.ResponseWriter, code int, format string,
 	http.Error(w, msg, code)
 }
 
-
 func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]byte, error) {
 	var request map[string]interface{}
 	if err := json.Unmarshal(anthropicRequest, &request); err != nil {
@@ -435,7 +448,7 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 				"role":    "system",
 				"content": systemContent,
 			}
-			
+
 			// Prepend system message to messages array
 			newMessages := append([]interface{}{systemMessage}, messages...)
 			cleanedRequest["messages"] = newMessages
@@ -461,18 +474,14 @@ func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]by
 		if err != nil {
 			h.logger.Warn("Failed to transform tools", "error", err)
 			// If tools transformation fails, remove tool_choice to prevent validation errors
-			if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
-				delete(cleanedRequest, "tool_choice")
-			}
+			delete(cleanedRequest, "tool_choice")
 		} else {
 			cleanedRequest["tools"] = transformedTools
 
 			// Re-validate tool_choice after successful transformation
 			// If transformed tools array is empty, remove tool_choice
 			if len(transformedTools) == 0 {
-				if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
-					delete(cleanedRequest, "tool_choice")
-				}
+				delete(cleanedRequest, "tool_choice")
 			}
 		}
 	}
@@ -514,6 +523,7 @@ func (h *ProxyHandler) transformOpenAIMessagesToClaude(messages []interface{}) [
 
 				// Collect all consecutive tool messages
 				var toolResults []interface{}
+
 				for i < len(messages) {
 					if toolMsg, ok := messages[i].(map[string]interface{}); ok {
 						if toolRole, _ := toolMsg["role"].(string); toolRole == "tool" {
@@ -595,12 +605,12 @@ func (h *ProxyHandler) transformOpenAIToolsToClaude(tools []interface{}) []inter
 func (h *ProxyHandler) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
 	// Remove Claude/Anthropic-specific fields that OpenAI/OpenRouter don't support
 	fieldsToRemove := []string{"cache_control"}
-	
+
 	// Remove metadata if store is not enabled (OpenAI requirement)
 	if store, hasStore := request["store"]; !hasStore || store != true {
 		fieldsToRemove = append(fieldsToRemove, "metadata")
 	}
-	
+
 	cleaned := h.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
 
 	// Handle tool_choice logic: only remove if no tools are present, tools is null, or tools is empty array
@@ -622,7 +632,7 @@ func (h *ProxyHandler) buildEndpointURL(provider providers.Provider, baseURL, mo
 		if parts := strings.SplitN(modelName, ",", 2); len(parts) > 1 {
 			actualModel = parts[1]
 		}
-		
+
 		// Gemini requires the model in the URL path
 		// Format: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
 		if strings.HasSuffix(baseURL, "/models") {
@@ -631,12 +641,13 @@ func (h *ProxyHandler) buildEndpointURL(provider providers.Provider, baseURL, mo
 			// Base URL already has a model specified, replace it
 			baseIndex := strings.LastIndex(baseURL, "/models/")
 			basePart := baseURL[:baseIndex+8] // Keep "/models/"
+
 			return fmt.Sprintf("%s%s:generateContent", basePart, actualModel)
 		}
 		// Fallback to appending the model
 		return fmt.Sprintf("%s/%s:generateContent", strings.TrimSuffix(baseURL, "/"), actualModel)
 	}
-	
+
 	// For all other providers, use the base URL as-is
 	return baseURL
 }
@@ -655,23 +666,24 @@ func (h *ProxyHandler) transformAnthropicToGemini(requestBody []byte) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert messages: %w", err)
 	}
+
 	geminiReq["contents"] = contents
 
 	// Convert generation config
 	generationConfig := make(map[string]interface{})
-	
+
 	if maxTokens, ok := anthropicReq["max_tokens"].(float64); ok {
 		generationConfig["maxOutputTokens"] = int(maxTokens)
 	}
-	
+
 	if temperature, ok := anthropicReq["temperature"].(float64); ok {
 		generationConfig["temperature"] = temperature
 	}
-	
+
 	if topP, ok := anthropicReq["top_p"].(float64); ok {
 		generationConfig["topP"] = topP
 	}
-	
+
 	if topK, ok := anthropicReq["top_k"].(float64); ok {
 		generationConfig["topK"] = int(topK)
 	}
@@ -686,6 +698,7 @@ func (h *ProxyHandler) transformAnthropicToGemini(requestBody []byte) ([]byte, e
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert tools: %w", err)
 		}
+
 		geminiReq["tools"] = geminiTools
 	}
 
@@ -696,7 +709,7 @@ func (h *ProxyHandler) transformAnthropicToGemini(requestBody []byte) ([]byte, e
 			"threshold": "BLOCK_MEDIUM_AND_ABOVE",
 		},
 		{
-			"category":  "HARM_CATEGORY_HATE_SPEECH", 
+			"category":  "HARM_CATEGORY_HATE_SPEECH",
 			"threshold": "BLOCK_MEDIUM_AND_ABOVE",
 		},
 		{
@@ -738,6 +751,7 @@ func (h *ProxyHandler) convertAnthropicMessagesToGeminiContents(anthropicReq map
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert message: %w", err)
 				}
+
 				if geminiContent != nil {
 					contents = append(contents, geminiContent)
 				}
@@ -752,11 +766,12 @@ func (h *ProxyHandler) convertAnthropicMessagesToGeminiContents(anthropicReq map
 func (h *ProxyHandler) convertAnthropicMessageToGeminiContent(message map[string]interface{}) (map[string]interface{}, error) {
 	role, ok := message["role"].(string)
 	if !ok {
-		return nil, fmt.Errorf("message missing role")
+		return nil, errors.New("message missing role")
 	}
 
 	// Map roles
 	var geminiRole string
+
 	switch role {
 	case "user":
 		geminiRole = "user"
@@ -776,6 +791,7 @@ func (h *ProxyHandler) convertAnthropicMessageToGeminiContent(message map[string
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert content: %w", err)
 		}
+
 		content["parts"] = parts
 	} else if contentStr, ok := message["content"].(string); ok {
 		// Handle string content
@@ -816,6 +832,7 @@ func (h *ProxyHandler) convertAnthropicContentToGeminiParts(contentArray []inter
 					if input, ok := itemMap["input"].(map[string]interface{}); ok {
 						functionCall["args"] = input
 					}
+
 					parts = append(parts, map[string]interface{}{
 						"functionCall": functionCall,
 					})
@@ -826,6 +843,7 @@ func (h *ProxyHandler) convertAnthropicContentToGeminiParts(contentArray []inter
 					// Gemini expects function_response.response to be a structured object
 					// Convert string content to structured format
 					var responseContent interface{}
+
 					if content, ok := itemMap["content"]; ok {
 						if contentStr, isString := content.(string); isString {
 							// Wrap string content in an object structure
@@ -882,7 +900,7 @@ func (h *ProxyHandler) convertAnthropicToolsToGemini(tools []interface{}) ([]int
 					geminiFunction := map[string]interface{}{
 						"name": function["name"],
 					}
-					
+
 					if description, ok := function["description"].(string); ok {
 						geminiFunction["description"] = description
 					}
@@ -923,6 +941,7 @@ func (h *ProxyHandler) convertOpenAPISchemaToGemini(schema map[string]interface{
 				geminiProperties[key] = h.convertOpenAPISchemaToGemini(propMap)
 			}
 		}
+
 		geminiSchema["properties"] = geminiProperties
 	}
 
@@ -957,24 +976,29 @@ func (h *ProxyHandler) removeFieldsRecursively(data interface{}, fieldsToRemove 
 	switch v := data.(type) {
 	case map[string]interface{}:
 		result := make(map[string]interface{})
+
 		for key, value := range v {
 			shouldRemove := false
+
 			for _, field := range fieldsToRemove {
 				if key == field {
 					shouldRemove = true
 					break
 				}
 			}
+
 			if !shouldRemove {
 				result[key] = h.removeFieldsRecursively(value, fieldsToRemove)
 			}
 		}
+
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, item := range v {
 			result[i] = h.removeFieldsRecursively(item, fieldsToRemove)
 		}
+
 		return result
 	default:
 		return v
@@ -985,7 +1009,6 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 	transformedTools := make([]interface{}, 0, len(tools))
 
 	for i, tool := range tools {
-
 		toolMap, ok := tool.(map[string]interface{})
 		if !ok {
 			h.logger.Warn("Skipping malformed tool", "index", i, "type", fmt.Sprintf("%T", tool))
@@ -1005,7 +1028,6 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 		// Claude tools might have: name, description, input_schema
 		// OpenAI tools need: type: "function", function: {name, description, parameters}
 		if name, hasName := toolMap["name"].(string); hasName {
-
 			openAITool := map[string]interface{}{
 				"type": "function",
 				"function": map[string]interface{}{
@@ -1024,6 +1046,7 @@ func (h *ProxyHandler) transformTools(tools []interface{}) ([]interface{}, error
 			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
 				function["parameters"] = inputSchema
 			}
+
 			transformedTools = append(transformedTools, openAITool)
 		} else {
 			h.logger.Warn("Tool missing name field", "index", i, "tool", toolMap)
@@ -1038,7 +1061,6 @@ func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
 
 	for i, message := range messages {
 		if msgMap, ok := message.(map[string]interface{}); ok {
-
 			// Check role-specific transformations
 			if role, ok := msgMap["role"].(string); ok {
 				if role == "user" {
@@ -1069,13 +1091,16 @@ func (h *ProxyHandler) transformMessages(messages []interface{}) []interface{} {
 			transformedMessages = append(transformedMessages, message)
 		}
 	}
+
 	return transformedMessages
 }
 
 // extractToolResults converts Claude tool_result blocks to OpenAI tool message format
 func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex int) []interface{} {
-	var toolMessages []interface{}
-	var regularContent []interface{}
+	var (
+		toolMessages   []interface{}
+		regularContent []interface{}
+	)
 
 	for _, contentBlock := range content {
 		if blockMap, ok := contentBlock.(map[string]interface{}); ok {
@@ -1090,6 +1115,7 @@ func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex in
 				// Convert Claude tool_use_id (toolu_*) to OpenAI tool_call_id (call_*)
 				// Handle malformed double-prefix cases
 				var openAIToolID string
+
 				if strings.HasPrefix(toolUseID, "toolu_toolu_") {
 					// Malformed double prefix - extract the core ID
 					coreID := strings.TrimPrefix(toolUseID, "toolu_toolu_")
@@ -1144,6 +1170,7 @@ func (h *ProxyHandler) extractToolResults(content []interface{}, messageIndex in
 			}
 			toolMessages = append(toolMessages, regularMessage)
 		}
+
 		return toolMessages
 	}
 
@@ -1169,6 +1196,7 @@ func (h *ProxyHandler) formatToolResultContent(content interface{}) string {
 				}
 			}
 		}
+
 		if len(textParts) > 0 {
 			return strings.Join(textParts, "\n")
 		}
@@ -1188,13 +1216,16 @@ func (h *ProxyHandler) truncateContent(content interface{}, maxLen int) string {
 	if len(str) <= maxLen {
 		return str
 	}
+
 	return str[:maxLen] + "..."
 }
 
 // transformAssistantMessage converts Claude assistant messages with tool_use blocks to OpenAI format with tool_calls
 func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}, messageIndex int) map[string]interface{} {
-	var textContent strings.Builder
-	var toolCalls []interface{}
+	var (
+		textContent strings.Builder
+		toolCalls   []interface{}
+	)
 
 	for _, contentBlock := range content {
 		if blockMap, ok := contentBlock.(map[string]interface{}); ok {
@@ -1229,6 +1260,7 @@ func (h *ProxyHandler) transformAssistantMessage(msgMap map[string]interface{}, 
 
 				// Convert input to JSON string format expected by OpenAI
 				var argumentsJSON string
+
 				if toolInput != nil {
 					if inputBytes, err := json.Marshal(toolInput); err == nil {
 						argumentsJSON = string(inputBytes)

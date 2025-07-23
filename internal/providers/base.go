@@ -59,6 +59,7 @@ func MapTokenUsage(sourceUsage map[string]interface{}, sourceMapping TokenMappin
 	if promptTokens, ok := sourceUsage[sourceMapping.InputTokens]; ok {
 		anthropicUsage[AnthropicTokenMapping.InputTokens] = promptTokens
 	}
+
 	if completionTokens, ok := sourceUsage[sourceMapping.OutputTokens]; ok {
 		anthropicUsage[AnthropicTokenMapping.OutputTokens] = completionTokens
 	}
@@ -68,6 +69,7 @@ func MapTokenUsage(sourceUsage map[string]interface{}, sourceMapping TokenMappin
 		if cachedTokens, ok := promptDetails[sourceMapping.CacheReadInputTokens]; ok {
 			anthropicUsage[AnthropicTokenMapping.CacheReadInputTokens] = cachedTokens
 		}
+
 		if cacheCreationTokens, ok := promptDetails[sourceMapping.CacheCreateInputTokens]; ok {
 			anthropicUsage[AnthropicTokenMapping.CacheCreateInputTokens] = cacheCreationTokens
 		}
@@ -99,6 +101,7 @@ func ConvertStopReason(reason string) *string {
 	}
 
 	defaultReason := "end_turn"
+
 	return &defaultReason
 }
 
@@ -107,24 +110,29 @@ func RemoveFieldsRecursively(data interface{}, fieldsToRemove []string) interfac
 	switch v := data.(type) {
 	case map[string]interface{}:
 		result := make(map[string]interface{})
+
 		for key, value := range v {
 			shouldRemove := false
+
 			for _, field := range fieldsToRemove {
 				if key == field {
 					shouldRemove = true
 					break
 				}
 			}
+
 			if !shouldRemove {
 				result[key] = RemoveFieldsRecursively(value, fieldsToRemove)
 			}
 		}
+
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, item := range v {
 			result[i] = RemoveFieldsRecursively(item, fieldsToRemove)
 		}
+
 		return result
 	default:
 		return v
@@ -175,5 +183,6 @@ func ExtractModelFromConfig(modelConfig string) (provider, model string) {
 	if len(parts) == 2 {
 		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 	}
+
 	return "", strings.TrimSpace(modelConfig)
 }

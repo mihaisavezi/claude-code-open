@@ -20,6 +20,7 @@ func (rw *responseWriter) WriteHeader(status int) {
 func (rw *responseWriter) Write(data []byte) (int, error) {
 	n, err := rw.ResponseWriter.Write(data)
 	rw.length += n
+
 	return n, err
 }
 

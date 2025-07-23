@@ -19,6 +19,7 @@ func NewAuthMiddleware(config *config.Manager, logger *slog.Logger) func(http.Ha
 		config: config,
 		logger: logger,
 	}
+
 	return am.middleware
 }
 
@@ -27,6 +28,7 @@ func (am *AuthMiddleware) middleware(next http.Handler) http.Handler {
 		if err := am.authenticate(r); err != nil {
 			am.logger.Error("Authentication failed", "error", err, "remote_addr", r.RemoteAddr)
 			http.Error(w, "Proxy API key not authorized", http.StatusUnauthorized)
+
 			return
 		}
 

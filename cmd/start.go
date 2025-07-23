@@ -48,5 +48,6 @@ func runStart(cmd *cobra.Command, _ []string) error {
 
 	// Create and start server
 	srv := server.New(cfgMgr, logger)
+
 	return srv.Start()
 }

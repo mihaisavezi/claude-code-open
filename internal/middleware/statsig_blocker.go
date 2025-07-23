@@ -14,6 +14,7 @@ func NewStatsigBlockerMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 	sbm := &StatsigBlockerMiddleware{
 		logger: logger,
 	}
+
 	return sbm.middleware
 }
 

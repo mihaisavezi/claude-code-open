@@ -14,6 +14,7 @@ func NewMetricsBlockerMiddleware(logger *slog.Logger) func(http.Handler) http.Ha
 	mbm := &MetricsBlockerMiddleware{
 		logger: logger,
 	}
+
 	return mbm.middleware
 }
 

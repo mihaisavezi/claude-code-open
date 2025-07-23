@@ -34,6 +34,7 @@ func init() {
 
 	// Setup directories with backward compatibility
 	var err error
+
 	homeDir, err = os.UserHomeDir()
 	if err != nil {
 		logger.Error("Failed to get home directory", "error", err)
@@ -77,6 +78,7 @@ func getConfigDirectory(homeDir string) string {
 		color.Yellow("Using existing configuration directory: %s", oldDir)
 		color.Cyan("Consider migrating to the new directory: %s", newDir)
 		color.Cyan("You can do this by running: mv %s %s", oldDir, newDir)
+
 		return oldDir
 	}
 
@@ -97,6 +99,7 @@ func directoryHasConfig(dir string) bool {
 	if _, err := os.Stat(yamlConfig); err == nil {
 		return true
 	}
+
 	if _, err := os.Stat(jsonConfig); err == nil {
 		return true
 	}
@@ -140,14 +143,17 @@ func ensureConfigExists() error {
 			color.Green("No configuration file found, but CCO_API_KEY is set - using minimal configuration")
 			return nil
 		}
+
 		color.Yellow("Configuration not found, starting setup...")
+
 		return promptForConfig()
 	}
+
 	return nil
 }
 
 func promptForConfig() error {
 	// This will be implemented in the config command
 	fmt.Println("Please run 'cco config init' to set up your configuration")
-	return fmt.Errorf("configuration required")
+	return errors.New("configuration required")
 }

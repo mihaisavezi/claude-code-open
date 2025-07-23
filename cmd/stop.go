@@ -32,5 +32,6 @@ func runStop(cmd *cobra.Command, _ []string) error {
 	procMgr.CleanupRef()
 
 	color.Green("Service stopped successfully")
+
 	return nil
 }

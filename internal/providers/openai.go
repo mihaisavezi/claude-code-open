@@ -47,6 +47,7 @@ func (p *OpenAIProvider) IsStreaming(headers map[string][]string) bool {
 			}
 		}
 	}
+
 	if transferEncoding, ok := headers["Transfer-Encoding"]; ok {
 		for _, te := range transferEncoding {
 			if te == "chunked" {
@@ -54,6 +55,7 @@ func (p *OpenAIProvider) IsStreaming(headers map[string][]string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -178,22 +180,24 @@ func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, er
 				Message: openaiResp.Error.Message,
 			},
 		}
+
 		return json.Marshal(anthropicResp)
 	}
 
 	// Handle streaming vs non-streaming responses
 	if len(openaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in OpenAI response")
+		return nil, errors.New("no choices in OpenAI response")
 	}
 
 	choice := openaiResp.Choices[0]
+
 	message := choice.Message
 	if message == nil {
 		message = choice.Delta // Handle streaming responses
 	}
 
 	if message == nil {
-		return nil, fmt.Errorf("no message content in choice")
+		return nil, errors.New("no message content in choice")
 	}
 
 	anthropicResp := anthropicResponse{
@@ -208,6 +212,7 @@ func (p *OpenAIProvider) convertOpenAIToAnthropic(openaiData []byte) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert message content: %w", err)
 	}
+
 	anthropicResp.Content = content
 
 	// Convert stop reason
@@ -261,6 +266,7 @@ func (p *OpenAIProvider) convertMessageContent(message *openAIMessage) ([]anthro
 	// Handle tool results
 	if message.Role == "tool" && message.ToolCallId != nil {
 		var toolContent interface{}
+
 		if message.Content != nil {
 			var jsonContent interface{}
 			if err := json.Unmarshal([]byte(*message.Content), &jsonContent); err == nil {
@@ -323,6 +329,7 @@ func (p *OpenAIProvider) convertStopReason(openaiReason string) *string {
 	}
 
 	defaultReason := "end_turn"
+
 	return &defaultReason
 }
 
@@ -357,6 +364,7 @@ func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state
 	if id, ok := rawChunk["id"].(string); ok && state.MessageID == "" {
 		state.MessageID = id
 	}
+
 	if model, ok := rawChunk["model"].(string); ok && state.Model == "" {
 		state.Model = model
 	}
@@ -364,7 +372,6 @@ func (p *OpenAIProvider) convertOpenAIToAnthropicStream(openaiData []byte, state
 	// Handle choices array
 	if choices, ok := rawChunk["choices"].([]interface{}); ok && len(choices) > 0 {
 		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
-
 			// Send message_start event if not sent yet
 			if !state.MessageStartSent {
 				messageStartEvent := p.createMessageStartEvent(state.MessageID, state.Model, rawChunk)
@@ -413,6 +420,7 @@ func (p *OpenAIProvider) createMessageStartEvent(messageID, model string, firstC
 		if promptTokens, ok := chunkUsage["prompt_tokens"]; ok {
 			usage["input_tokens"] = promptTokens
 		}
+
 		if promptDetails, ok := chunkUsage["prompt_tokens_details"].(map[string]interface{}); ok {
 			if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
 				usage["cache_read_input_tokens"] = cachedTokens
@@ -532,6 +540,7 @@ func (p *OpenAIProvider) parseToolCallData(toolCall map[string]interface{}) Open
 			hasIndex = true
 		}
 	}
+
 	data.Index = int(toolCallIndex)
 	data.HasIndex = hasIndex
 
@@ -575,6 +584,7 @@ func (p *OpenAIProvider) findOrCreateContentBlock(data OpenAIToolCallData, state
 			ToolName:      data.FunctionName,
 			Arguments:     "",
 		}
+
 		return contentBlockIndex
 	}
 
@@ -607,6 +617,7 @@ func (p *OpenAIProvider) createContentBlockStartEvent(index int, block *ContentB
 			"input": map[string]interface{}{},
 		},
 	}
+
 	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
 }
 
@@ -615,9 +626,11 @@ func (p *OpenAIProvider) convertToolCallID(toolCallID string) string {
 	if strings.HasPrefix(toolCallID, "toolu_") {
 		return toolCallID
 	}
+
 	if strings.HasPrefix(toolCallID, "call_") {
 		return "toolu_" + strings.TrimPrefix(toolCallID, "call_")
 	}
+
 	return "toolu_" + toolCallID
 }
 
@@ -641,6 +654,7 @@ func (p *OpenAIProvider) createInputDeltaEvent(index int, partialJSON string) []
 			"partial_json": partialJSON,
 		},
 	}
+
 	return p.formatSSEEvent("content_block_delta", inputDeltaEvent)
 }
 
@@ -652,6 +666,7 @@ func (p *OpenAIProvider) getOrCreateTextBlock(state *StreamState) int {
 			Type: "text",
 		}
 	}
+
 	return textIndex
 }
 
@@ -665,6 +680,7 @@ func (p *OpenAIProvider) createTextBlockStartEvent(index int) []byte {
 			"text": "",
 		},
 	}
+
 	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
 }
 
@@ -678,6 +694,7 @@ func (p *OpenAIProvider) createTextDeltaEvent(index int, text string) []byte {
 			"text": text,
 		},
 	}
+
 	return p.formatSSEEvent("content_block_delta", contentDeltaEvent)
 }
 
@@ -733,6 +750,7 @@ func (p *OpenAIProvider) convertUsage(usage map[string]interface{}) map[string]i
 	if promptTokens, ok := usage["prompt_tokens"]; ok {
 		anthropicUsage["input_tokens"] = promptTokens
 	}
+
 	if completionTokens, ok := usage["completion_tokens"]; ok {
 		anthropicUsage["output_tokens"] = completionTokens
 	}
@@ -770,7 +788,7 @@ func (p *OpenAIProvider) transformAnthropicToOpenAI(anthropicRequest []byte) ([]
 				"role":    "system",
 				"content": systemContent,
 			}
-			
+
 			// Prepend system message to messages array
 			newMessages := append([]interface{}{systemMessage}, messages...)
 			cleanedRequest["messages"] = newMessages
@@ -795,18 +813,14 @@ func (p *OpenAIProvider) transformAnthropicToOpenAI(anthropicRequest []byte) ([]
 		transformedTools, err := p.transformTools(tools)
 		if err != nil {
 			// If tools transformation fails, remove tool_choice to prevent validation errors
-			if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
-				delete(cleanedRequest, "tool_choice")
-			}
+			delete(cleanedRequest, "tool_choice")
 		} else {
 			cleanedRequest["tools"] = transformedTools
 
 			// Re-validate tool_choice after successful transformation
 			// If transformed tools array is empty, remove tool_choice
 			if len(transformedTools) == 0 {
-				if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
-					delete(cleanedRequest, "tool_choice")
-				}
+				delete(cleanedRequest, "tool_choice")
 			}
 		}
 	}
@@ -817,11 +831,11 @@ func (p *OpenAIProvider) transformAnthropicToOpenAI(anthropicRequest []byte) ([]
 // Helper methods for transformAnthropicToOpenAI (similar to OpenRouter)
 func (p *OpenAIProvider) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
 	fieldsToRemove := []string{"cache_control"}
-	
+
 	if store, hasStore := request["store"]; !hasStore || store != true {
 		fieldsToRemove = append(fieldsToRemove, "metadata")
 	}
-	
+
 	cleaned := p.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
 
 	if tools, hasTools := cleaned["tools"]; !hasTools || tools == nil {
@@ -837,24 +851,29 @@ func (p *OpenAIProvider) removeFieldsRecursively(data interface{}, fieldsToRemov
 	switch v := data.(type) {
 	case map[string]interface{}:
 		result := make(map[string]interface{})
+
 		for key, value := range v {
 			shouldRemove := false
+
 			for _, field := range fieldsToRemove {
 				if key == field {
 					shouldRemove = true
 					break
 				}
 			}
+
 			if !shouldRemove {
 				result[key] = p.removeFieldsRecursively(value, fieldsToRemove)
 			}
 		}
+
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, item := range v {
 			result[i] = p.removeFieldsRecursively(item, fieldsToRemove)
 		}
+
 		return result
 	default:
 		return v
@@ -894,6 +913,7 @@ func (p *OpenAIProvider) transformTools(tools []interface{}) ([]interface{}, err
 			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
 				function["parameters"] = inputSchema
 			}
+
 			transformedTools = append(transformedTools, openAITool)
 		}
 	}
@@ -919,12 +939,13 @@ func (p *OpenAIProvider) transformMessages(messages []interface{}) []interface{}
 					if content, ok := msgMap["content"].([]interface{}); ok {
 						transformedMsg := p.transformAssistantMessage(msgMap, content)
 						transformedMessages = append(transformedMessages, transformedMsg)
+
 						continue
 					}
 				}
 			}
 		}
-		
+
 		transformedMessages = append(transformedMessages, message)
 	}
 
@@ -939,7 +960,7 @@ func (p *OpenAIProvider) extractToolResults(content []interface{}) []interface{}
 			if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_result" {
 				if toolUseId, ok := blockMap["tool_use_id"].(string); ok {
 					toolCallId := strings.Replace(toolUseId, "toolu_", "call_", 1)
-					
+
 					toolMessage := map[string]interface{}{
 						"role":         "tool",
 						"tool_call_id": toolCallId,
@@ -964,13 +985,15 @@ func (p *OpenAIProvider) transformAssistantMessage(msgMap map[string]interface{}
 		transformedMsg[k] = v
 	}
 
-	var textContent strings.Builder
-	var toolCalls []interface{}
+	var (
+		textContent strings.Builder
+		toolCalls   []interface{}
+	)
 
 	for _, block := range content {
 		if blockMap, ok := block.(map[string]interface{}); ok {
 			blockType, _ := blockMap["type"].(string)
-			
+
 			switch blockType {
 			case "text":
 				if text, ok := blockMap["text"].(string); ok {
@@ -980,8 +1003,9 @@ func (p *OpenAIProvider) transformAssistantMessage(msgMap map[string]interface{}
 				if id, ok := blockMap["id"].(string); ok {
 					if name, ok := blockMap["name"].(string); ok {
 						toolCallId := strings.Replace(id, "toolu_", "call_", 1)
-						
+
 						var arguments string
+
 						if input := blockMap["input"]; input != nil {
 							if inputBytes, err := json.Marshal(input); err == nil {
 								arguments = string(inputBytes)

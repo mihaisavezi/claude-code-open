@@ -42,7 +42,7 @@ func New(configManager *config.Manager, logger *slog.Logger) *Server {
 func (s *Server) Start() error {
 	cfg := s.config.Get()
 	if cfg == nil {
-		return fmt.Errorf("configuration not loaded")
+		return errors.New("configuration not loaded")
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
@@ -85,6 +85,7 @@ func (s *Server) Start() error {
 	}
 
 	s.logger.Info("Server exited")
+
 	return nil
 }
 
@@ -119,25 +120,25 @@ func (s *Server) setupRoutes() *http.ServeMux {
 // handleAddressInUse attempts to find and display the PID using the specified address
 func (s *Server) handleAddressInUse(addr string) {
 	s.logger.Error("Address already in use", "address", addr)
-	
+
 	// Extract port from address
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		s.logger.Error("Failed to parse address", "address", addr, "error", err)
 		return
 	}
-	
+
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		s.logger.Error("Invalid port number", "port", portStr, "error", err)
 		return
 	}
-	
+
 	pid := s.findProcessUsingPort(port)
 	if pid > 0 {
 		processInfo := s.getProcessInfo(pid)
-		s.logger.Error("Port is being used by another process", 
-			"port", port, 
+		s.logger.Error("Port is being used by another process",
+			"port", port,
 			"pid", pid,
 			"process", processInfo)
 	} else {
@@ -164,31 +165,32 @@ func (s *Server) findProcessUsingPortUnix(port int) int {
 	if pid := s.tryNetstat(port); pid > 0 {
 		return pid
 	}
-	
+
 	// Try lsof as fallback
 	if pid := s.tryLsof(port); pid > 0 {
 		return pid
 	}
-	
+
 	// Try ss as another fallback
 	if pid := s.trySS(port); pid > 0 {
 		return pid
 	}
-	
+
 	return 0
 }
 
 // tryNetstat attempts to find PID using netstat
 func (s *Server) tryNetstat(port int) int {
 	cmd := exec.Command("netstat", "-tlnp")
+
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	portPattern := fmt.Sprintf(":%d ", port)
-	
+
 	for _, line := range lines {
 		if strings.Contains(line, portPattern) && strings.Contains(line, "LISTEN") {
 			// Extract PID from netstat output (format: PID/program_name)
@@ -203,37 +205,41 @@ func (s *Server) tryNetstat(port int) int {
 			}
 		}
 	}
+
 	return 0
 }
 
 // tryLsof attempts to find PID using lsof
 func (s *Server) tryLsof(port int) int {
 	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
+
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
 	}
-	
+
 	pidStr := strings.TrimSpace(string(output))
 	if pidStr != "" {
 		if pid, err := strconv.Atoi(pidStr); err == nil {
 			return pid
 		}
 	}
+
 	return 0
 }
 
 // trySS attempts to find PID using ss command
 func (s *Server) trySS(port int) int {
 	cmd := exec.Command("ss", "-tlnp")
+
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	portPattern := fmt.Sprintf(":%d ", port)
-	
+
 	for _, line := range lines {
 		if strings.Contains(line, portPattern) && strings.Contains(line, "LISTEN") {
 			// Extract PID from ss output
@@ -248,20 +254,22 @@ func (s *Server) trySS(port int) int {
 			}
 		}
 	}
+
 	return 0
 }
 
 // findProcessUsingPortWindows finds process using port on Windows
 func (s *Server) findProcessUsingPortWindows(port int) int {
 	cmd := exec.Command("netstat", "-ano")
+
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
 	}
-	
+
 	lines := strings.Split(string(output), "\n")
 	portPattern := fmt.Sprintf(":%d ", port)
-	
+
 	for _, line := range lines {
 		if strings.Contains(line, portPattern) && strings.Contains(line, "LISTENING") {
 			parts := strings.Fields(line)
@@ -273,6 +281,7 @@ func (s *Server) findProcessUsingPortWindows(port int) int {
 			}
 		}
 	}
+
 	return 0
 }
 
@@ -292,6 +301,7 @@ func (s *Server) getProcessInfo(pid int) string {
 func (s *Server) getProcessInfoUnix(pid int) string {
 	// Try ps command
 	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=")
+
 	output, err := cmd.Output()
 	if err == nil {
 		processName := strings.TrimSpace(string(output))
@@ -299,13 +309,14 @@ func (s *Server) getProcessInfoUnix(pid int) string {
 			return fmt.Sprintf("%s (PID: %d)", processName, pid)
 		}
 	}
-	
+
 	return fmt.Sprintf("PID: %d", pid)
 }
 
 // getProcessInfoWindows gets process info on Windows
 func (s *Server) getProcessInfoWindows(pid int) string {
 	cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/FO", "CSV", "/NH")
+
 	output, err := cmd.Output()
 	if err == nil {
 		lines := strings.Split(string(output), "\n")
@@ -318,6 +329,6 @@ func (s *Server) getProcessInfoWindows(pid int) string {
 			}
 		}
 	}
-	
+
 	return fmt.Sprintf("PID: %d", pid)
 }

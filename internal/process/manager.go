@@ -40,6 +40,7 @@ func (m *Manager) WritePID() error {
 	}
 
 	pid := strconv.Itoa(os.Getpid())
+
 	return os.WriteFile(m.pidFile, []byte(pid), 0644)
 }
 
@@ -53,6 +54,7 @@ func (m *Manager) ReadPID() int {
 	}
 
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+
 	return pid
 }
 
@@ -85,16 +87,19 @@ func (m *Manager) Stop() error {
 		if !m.IsRunning() {
 			break
 		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	m.CleanupPID()
+
 	return nil
 }
 
 func (m *Manager) CleanupPID() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	os.Remove(m.pidFile)
 }
 
@@ -118,23 +123,27 @@ func (m *Manager) ReadRef() int {
 	}
 
 	count, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+
 	return count
 }
 
 func (m *Manager) writeRef(count int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	os.WriteFile(m.refFile, []byte(strconv.Itoa(count)), 0644)
 }
 
 func (m *Manager) CleanupRef() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	os.Remove(m.refFile)
 }
 
 func (m *Manager) WaitForService(timeout time.Duration) bool {
 	expire := time.Now().Add(timeout)
+
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -142,6 +151,7 @@ func (m *Manager) WaitForService(timeout time.Duration) bool {
 		if m.IsRunning() {
 			return true
 		}
+
 		<-ticker.C
 	}
 
@@ -161,7 +171,7 @@ func (m *Manager) StartServiceIfNeeded() (bool, error) {
 
 	// Wait for service to be ready
 	if !m.WaitForService(10 * time.Second) {
-		return false, fmt.Errorf("service startup timeout")
+		return false, errors.New("service startup timeout")
 	}
 
 	return true, nil // Service was started by us

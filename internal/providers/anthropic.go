@@ -40,6 +40,7 @@ func (p *AnthropicProvider) IsStreaming(headers map[string][]string) bool {
 			}
 		}
 	}
+
 	return false
 }
 

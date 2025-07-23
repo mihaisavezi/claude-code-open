@@ -101,6 +101,7 @@ func (r *Registry) List() []string {
 	for name := range r.providers {
 		names = append(names, name)
 	}
+
 	return names
 }
 

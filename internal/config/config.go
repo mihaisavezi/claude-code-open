@@ -122,12 +122,14 @@ func (m *Manager) createMinimalConfig() Config {
 }
 
 func (m *Manager) Load() (*Config, error) {
-	var cfg Config
-	var err error
+	var (
+		cfg Config
+		err error
+	)
 
 	// Check if CCO_API_KEY is set - if so, we can run without a config file
 	ccoAPIKey := os.Getenv("CCO_API_KEY")
-	
+
 	// Try YAML first (takes precedence)
 	if _, yamlErr := os.Stat(m.yamlPath); yamlErr == nil {
 		cfg, err = m.loadYAML()
@@ -152,6 +154,7 @@ func (m *Manager) Load() (*Config, error) {
 	}
 
 	m.configValue.Store(&cfg)
+
 	return &cfg, nil
 }
 
@@ -190,6 +193,7 @@ func (m *Manager) applyDefaults(cfg *Config) error {
 	if cfg.Port == 0 {
 		cfg.Port = DefaultPort
 	}
+
 	if cfg.Host == "" {
 		cfg.Host = DefaultHost
 	}
@@ -217,6 +221,7 @@ func (m *Manager) applyDefaults(cfg *Config) error {
 		if len(provider.ModelWhitelist) > 0 && len(provider.DefaultModels) > 0 {
 			// Filter default models based on whitelist
 			var filteredDefaults []string
+
 			for _, model := range provider.DefaultModels {
 				for _, whitelisted := range provider.ModelWhitelist {
 					if strings.Contains(model, whitelisted) || model == whitelisted {
@@ -225,6 +230,7 @@ func (m *Manager) applyDefaults(cfg *Config) error {
 					}
 				}
 			}
+
 			provider.DefaultModels = filteredDefaults
 		}
 	}
@@ -245,6 +251,7 @@ func (m *Manager) Get() *Config {
 			Port: DefaultPort,
 		}
 	}
+
 	return cfg
 }
 
@@ -264,6 +271,7 @@ func (m *Manager) Save(cfg *Config) error {
 	}
 
 	m.configValue.Store(cfg)
+
 	return nil
 }
 
@@ -282,6 +290,7 @@ func (m *Manager) SaveAsYAML(cfg *Config) error {
 	}
 
 	m.configValue.Store(cfg)
+
 	return nil
 }
 
@@ -300,6 +309,7 @@ func (m *Manager) SaveAsJSON(cfg *Config) error {
 	}
 
 	m.configValue.Store(cfg)
+
 	return nil
 }
 
@@ -308,6 +318,7 @@ func (m *Manager) GetPath() string {
 	if _, err := os.Stat(m.yamlPath); err == nil {
 		return m.yamlPath
 	}
+
 	return m.jsonPath
 }
 
@@ -322,6 +333,7 @@ func (m *Manager) GetJSONPath() string {
 func (m *Manager) Exists() bool {
 	_, yamlErr := os.Stat(m.yamlPath)
 	_, jsonErr := os.Stat(m.jsonPath)
+
 	return yamlErr == nil || jsonErr == nil
 }
 
@@ -396,6 +408,7 @@ func (p *Provider) IsModelAllowed(model string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -406,10 +419,12 @@ func (p *Provider) GetAllowedModels() []string {
 	}
 
 	var allowed []string
+
 	for _, model := range p.DefaultModels {
 		if p.IsModelAllowed(model) {
 			allowed = append(allowed, model)
 		}
 	}
+
 	return allowed
 }

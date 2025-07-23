@@ -64,23 +64,28 @@ func runConfigInit(cmd *cobra.Command, _ []string) error {
 
 	// Get provider details
 	fmt.Print("\nProvider Name (e.g., openrouter, openai): ")
+
 	providerName, _ := reader.ReadString('\n')
 	providerName = strings.TrimSpace(providerName)
 
 	fmt.Print("API Key: ")
+
 	apiKey, _ := reader.ReadString('\n')
 	apiKey = strings.TrimSpace(apiKey)
 
 	fmt.Print("API Base URL: ")
+
 	baseURL, _ := reader.ReadString('\n')
 	baseURL = strings.TrimSpace(baseURL)
 
 	fmt.Print("Default Model: ")
+
 	model, _ := reader.ReadString('\n')
 	model = strings.TrimSpace(model)
 
 	// Optional router API key
 	fmt.Print("Router API Key (optional, for authentication): ")
+
 	routerAPIKey, _ := reader.ReadString('\n')
 	routerAPIKey = strings.TrimSpace(routerAPIKey)
 
@@ -135,9 +140,11 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 	if cfgMgr.HasYAML() {
 		configType = "YAML"
 	}
+
 	fmt.Printf("  %-15s: %s\n", "Format", configType)
 
 	fmt.Println("\nProviders:")
+
 	for _, provider := range cfg.Providers {
 		fmt.Printf("  - Name: %s\n", provider.Name)
 		fmt.Printf("    URL: %s\n", provider.APIBase)
@@ -146,26 +153,33 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 		if len(provider.DefaultModels) > 0 {
 			fmt.Printf("    Default Models: %v\n", provider.DefaultModels)
 		}
+
 		if len(provider.ModelWhitelist) > 0 {
 			fmt.Printf("    Model Whitelist: %v\n", provider.ModelWhitelist)
 		}
+
 		if len(provider.Models) > 0 {
 			fmt.Printf("    Models: %v\n", provider.Models)
 		}
+
 		fmt.Println()
 	}
 
 	fmt.Println("Router Configuration:")
 	fmt.Printf("  %-15s: %s\n", "Default", cfg.Router.Default)
+
 	if cfg.Router.Think != "" {
 		fmt.Printf("  %-15s: %s\n", "Think", cfg.Router.Think)
 	}
+
 	if cfg.Router.Background != "" {
 		fmt.Printf("  %-15s: %s\n", "Background", cfg.Router.Background)
 	}
+
 	if cfg.Router.LongContext != "" {
 		fmt.Printf("  %-15s: %s\n", "Long Context", cfg.Router.LongContext)
 	}
+
 	if cfg.Router.WebSearch != "" {
 		fmt.Printf("  %-15s: %s\n", "Web Search", cfg.Router.WebSearch)
 	}
@@ -175,7 +189,7 @@ func runConfigShow(cmd *cobra.Command, _ []string) error {
 
 func runConfigValidate(cmd *cobra.Command, _ []string) error {
 	if !cfgMgr.Exists() {
-		return fmt.Errorf("no configuration found")
+		return errors.New("no configuration found")
 	}
 
 	cfg, err := cfgMgr.Load()
@@ -194,9 +208,11 @@ func runConfigValidate(cmd *cobra.Command, _ []string) error {
 		if provider.Name == "" {
 			errors = append(errors, fmt.Sprintf("provider %d: name is required", i))
 		}
+
 		if provider.APIBase == "" {
 			errors = append(errors, fmt.Sprintf("provider %d: API base URL is required", i))
 		}
+
 		if provider.APIKey == "" {
 			errors = append(errors, fmt.Sprintf("provider %d: API key is required", i))
 		}
@@ -208,13 +224,16 @@ func runConfigValidate(cmd *cobra.Command, _ []string) error {
 
 	if len(errors) > 0 {
 		color.Red("Configuration validation failed:")
+
 		for _, err := range errors {
 			fmt.Printf("  - %s\n", err)
 		}
-		return fmt.Errorf("configuration validation failed")
+
+		return errors.New("configuration validation failed")
 	}
 
 	color.Green("Configuration is valid!")
+
 	return nil
 }
 
@@ -230,6 +249,7 @@ func runConfigGenerate(cmd *cobra.Command, _ []string) error {
 
 		color.Yellow("Configuration file already exists (%s format): %s", configType, cfgMgr.GetPath())
 		color.Cyan("Use --force to overwrite, or 'cco config show' to view current config")
+
 		return nil
 	}
 
@@ -259,8 +279,10 @@ func maskString(s string) string {
 	if s == "" {
 		return "(not set)"
 	}
+
 	if len(s) <= 8 {
 		return strings.Repeat("*", len(s))
 	}
+
 	return s[:4] + strings.Repeat("*", len(s)-8) + s[len(s)-4:]
 }

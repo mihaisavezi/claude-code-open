@@ -48,6 +48,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	// Track reference count
 	procMgr.IncrementRef()
+
 	defer func() {
 		procMgr.DecrementRef()
 		// Only stop service if we started it and no more references
@@ -69,12 +70,14 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 func filterEnv(env []string, key string) []string {
 	var filtered []string
+
 	prefix := key + "="
 	for _, e := range env {
 		if !startsWith(e, prefix) {
 			filtered = append(filtered, e)
 		}
 	}
+
 	return filtered
 }
 

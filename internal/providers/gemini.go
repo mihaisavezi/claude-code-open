@@ -47,6 +47,7 @@ func (p *GeminiProvider) IsStreaming(headers map[string][]string) bool {
 			}
 		}
 	}
+
 	if transferEncoding, ok := headers["Transfer-Encoding"]; ok {
 		for _, te := range transferEncoding {
 			if te == "chunked" {
@@ -54,6 +55,7 @@ func (p *GeminiProvider) IsStreaming(headers map[string][]string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -150,12 +152,13 @@ func (p *GeminiProvider) convertGeminiToAnthropic(geminiData []byte) ([]byte, er
 				Message: geminiResp.Error.Message,
 			},
 		}
+
 		return json.Marshal(anthropicResp)
 	}
 
 	// Handle streaming vs non-streaming responses
 	if len(geminiResp.Candidates) == 0 {
-		return nil, fmt.Errorf("no candidates in Gemini response")
+		return nil, errors.New("no candidates in Gemini response")
 	}
 
 	candidate := geminiResp.Candidates[0]
@@ -172,6 +175,7 @@ func (p *GeminiProvider) convertGeminiToAnthropic(geminiData []byte) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert content: %w", err)
 	}
+
 	anthropicResp.Content = content
 
 	// Convert stop reason
@@ -195,6 +199,7 @@ func (p *GeminiProvider) convertGeminiContent(content *geminiContent) ([]anthrop
 	if content == nil {
 		// Return empty text block if no content
 		emptyText := ""
+
 		return []anthropicContent{{
 			Type: "text",
 			Text: &emptyText,
@@ -266,6 +271,7 @@ func (p *GeminiProvider) convertStopReason(geminiReason string) *string {
 	}
 
 	defaultReason := "end_turn"
+
 	return &defaultReason
 }
 
@@ -300,6 +306,7 @@ func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state
 	if responseID, ok := rawChunk["responseId"].(string); ok && state.MessageID == "" {
 		state.MessageID = responseID
 	}
+
 	if modelVersion, ok := rawChunk["modelVersion"].(string); ok && state.Model == "" {
 		state.Model = modelVersion
 	}
@@ -307,7 +314,6 @@ func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state
 	// Handle candidates array
 	if candidates, ok := rawChunk["candidates"].([]interface{}); ok && len(candidates) > 0 {
 		if firstCandidate, ok := candidates[0].(map[string]interface{}); ok {
-
 			// Send message_start event if not sent yet
 			if !state.MessageStartSent {
 				messageStartEvent := p.createMessageStartEvent(state.MessageID, state.Model, rawChunk)
@@ -460,6 +466,7 @@ func (p *GeminiProvider) getOrCreateTextBlock(state *StreamState) int {
 			Type: "text",
 		}
 	}
+
 	return textIndex
 }
 
@@ -473,6 +480,7 @@ func (p *GeminiProvider) createTextBlockStartEvent(index int) []byte {
 			"text": "",
 		},
 	}
+
 	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
 }
 
@@ -486,6 +494,7 @@ func (p *GeminiProvider) createTextDeltaEvent(index int, text string) []byte {
 			"text": text,
 		},
 	}
+
 	return p.formatSSEEvent("content_block_delta", contentDeltaEvent)
 }
 
@@ -501,6 +510,7 @@ func (p *GeminiProvider) createToolBlockStartEvent(index int, block *ContentBloc
 			"input": map[string]interface{}{},
 		},
 	}
+
 	return p.formatSSEEvent("content_block_start", contentBlockStartEvent)
 }
 
@@ -514,6 +524,7 @@ func (p *GeminiProvider) createInputDeltaEvent(index int, partialJSON string) []
 			"partial_json": partialJSON,
 		},
 	}
+
 	return p.formatSSEEvent("content_block_delta", inputDeltaEvent)
 }
 
@@ -569,6 +580,7 @@ func (p *GeminiProvider) convertUsage(usage map[string]interface{}) map[string]i
 	if promptTokens, ok := usage["promptTokenCount"]; ok {
 		anthropicUsage["input_tokens"] = promptTokens
 	}
+
 	if candidatesTokens, ok := usage["candidatesTokenCount"]; ok {
 		anthropicUsage["output_tokens"] = candidatesTokens
 	}
@@ -590,23 +602,24 @@ func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert messages: %w", err)
 	}
+
 	geminiReq["contents"] = contents
 
 	// Convert generation config
 	generationConfig := make(map[string]interface{})
-	
+
 	if maxTokens, ok := anthropicReq["max_tokens"].(float64); ok {
 		generationConfig["maxOutputTokens"] = int(maxTokens)
 	}
-	
+
 	if temperature, ok := anthropicReq["temperature"].(float64); ok {
 		generationConfig["temperature"] = temperature
 	}
-	
+
 	if topP, ok := anthropicReq["top_p"].(float64); ok {
 		generationConfig["topP"] = topP
 	}
-	
+
 	if topK, ok := anthropicReq["top_k"].(float64); ok {
 		generationConfig["topK"] = int(topK)
 	}
@@ -621,6 +634,7 @@ func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte,
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert tools: %w", err)
 		}
+
 		geminiReq["tools"] = geminiTools
 	}
 
@@ -675,6 +689,7 @@ func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq m
 				if err != nil {
 					return nil, err
 				}
+
 				if geminiContent != nil {
 					contents = append(contents, geminiContent)
 				}
@@ -705,6 +720,7 @@ func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]inte
 				if err != nil {
 					return nil, err
 				}
+
 				if part != nil {
 					parts = append(parts, part)
 				}
@@ -756,6 +772,7 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 		if toolUseId, ok := block["tool_use_id"].(string); ok {
 			// Extract content and ensure it's a structured object for protobuf compatibility
 			var response interface{}
+
 			if content := block["content"]; content != nil {
 				if contentStr, ok := content.(string); ok {
 					// Wrap string content in structured object format for protobuf compatibility
@@ -772,7 +789,7 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 			return map[string]interface{}{
 				"functionResponse": map[string]interface{}{
 					"name":     toolUseId, // Use tool_use_id as function name reference
-					"response": response,   // Structured object instead of plain string
+					"response": response,  // Structured object instead of plain string
 				},
 			}, nil
 		}
