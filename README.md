@@ -24,18 +24,68 @@ This project is inspired by [Clude Code Router](https://github.com/musistudio/cl
 
 ## Quick Start
 
+> **Note**: When installed with `go install`, the binary is named `claude-code-open`. Throughout this documentation, you can substitute `cco` with `claude-code-open` or create an alias as shown in the installation section.
+
 ### Installation
+
+#### Option 1: Install with Go (Recommended)
+
+The easiest way to install is using Go's built-in installer:
+
+```bash
+# Install directly from GitHub
+go install github.com/Davincible/claude-code-open@latest
+
+# The binary will be installed as 'claude-code-open' in $(go env GOBIN) or $(go env GOPATH)/bin
+# Create an alias for shorter command (optional)
+echo 'alias cco="claude-code-open"' >> ~/.bashrc  # or ~/.zshrc
+source ~/.bashrc  # or ~/.zshrc
+
+# Or create a symlink (Linux/macOS) - handles both GOBIN and GOPATH
+GOBIN_DIR=$(go env GOBIN)
+if [ -z "$GOBIN_DIR" ]; then
+    GOBIN_DIR="$(go env GOPATH)/bin"
+fi
+sudo ln -s "$GOBIN_DIR/claude-code-open" /usr/local/bin/cco
+
+# One-liner version:
+# sudo ln -s "$([ -n "$(go env GOBIN)" ] && go env GOBIN || echo "$(go env GOPATH)/bin")/claude-code-open" /usr/local/bin/cco
+```
+
+#### Option 2: Build from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/claude-code-open
+git clone https://github.com/Davincible/claude-code-open
 cd claude-code-open
 
-# Build the application
-go build -o cco .
+# Build with Make (creates 'cco' binary)
+make build
+sudo make install  # Install to /usr/local/bin
 
-# Install globally (optional)
+# Or build manually
+go build -o cco .
 sudo mv cco /usr/local/bin/
+```
+
+#### Option 3: Install with Custom Binary Name
+
+```bash
+# Install with go install and create symlink using Go environment
+go install github.com/Davincible/claude-code-open@latest
+GOBIN_DIR=$(go env GOBIN); [ -z "$GOBIN_DIR" ] && GOBIN_DIR="$(go env GOPATH)/bin"
+sudo ln -sf "$GOBIN_DIR/claude-code-open" /usr/local/bin/cco
+
+# Or use go install with custom GOBIN (if you have write permissions)
+GOBIN=/usr/local/bin go install github.com/Davincible/claude-code-open@latest
+sudo mv /usr/local/bin/claude-code-open /usr/local/bin/cco
+
+# Or install to a custom directory you own
+mkdir -p ~/.local/bin
+GOBIN=~/.local/bin go install github.com/Davincible/claude-code-open@latest
+ln -sf ~/.local/bin/claude-code-open ~/.local/bin/cco
+# Add ~/.local/bin to PATH if not already there
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```
 
 ### Quick Start with CCO_API_KEY
@@ -49,8 +99,8 @@ For the fastest setup, you can run without any configuration file using just the
 export CCO_API_KEY="your-api-key-here"
 
 # Start the router immediately - no config file needed!
-# Although you can create a config if you want to store your API keys for all providers. See cco config
-cco start
+# Although you can create a config if you want to store your API keys for all providers
+cco start  # or claude-code-open start
 
 # The API key will be used for whichever provider your model requests
 # e.g., if you use "openrouter,anthropic/claude-3.5-sonnet" -> key goes to OpenRouter
@@ -68,7 +118,7 @@ cco start
 For advanced setups with multiple API keys, generate a complete YAML configuration:
 
 ```bash
-cco config generate
+cco config generate  # or claude-code-open config generate
 ```
 
 This creates `config.yaml` with all 5 supported providers and sensible defaults. Then edit the file to add your API keys:
@@ -91,7 +141,7 @@ providers:
 Alternatively, use the interactive setup:
 
 ```bash
-cco config init
+cco config init  # or claude-code-open config init
 ```
 
 ### Usage
@@ -99,25 +149,26 @@ cco config init
 Start the router service:
 
 ```bash
-cco start  # For if you want to start the proxy server separately. 
+cco start  # or claude-code-open start
 ```
 
 Use Claude Code with the router:
 
 ```bash
-cco code [claude-code-arguments]  # You can also run this directly without starting the server first, it will auto start
+cco code [claude-code-arguments]  # or claude-code-open code [...]
+# You can also run this directly without starting the server first, it will auto start
 ```
 
 Check service status:
 
 ```bash
-cco status
+cco status  # or claude-code-open status
 ```
 
 Stop the service:
 
 ```bash
-cco stop
+cco stop  # or claude-code-open stop
 ```
 
 ## Dynamic Model Selection
@@ -280,42 +331,42 @@ Model format: `provider_name/model_name` (e.g., `openai/gpt-4o`, `anthropic/clau
 
 ```bash
 # Start the router service
-cco start [--verbose] [--log-file]
+cco start [--verbose] [--log-file]  # or claude-code-open start [...]
 
 # Stop the router service  
-cco stop
+cco stop  # or claude-code-open stop
 
 # Check service status
-cco status
+cco status  # or claude-code-open status
 ```
 
 ### Configuration Management
 
 ```bash
 # Generate example YAML configuration with all providers
-cco config generate
+cco config generate  # or claude-code-open config generate
 
 # Generate and overwrite existing configuration
-cco config generate --force
+cco config generate --force  # or claude-code-open config generate --force
 
 # Initialize configuration interactively
-cco config init
+cco config init  # or claude-code-open config init
 
 # Show current configuration (displays format: YAML/JSON)
-cco config show
+cco config show  # or claude-code-open config show
 
 # Validate configuration
-cco config validate
+cco config validate  # or claude-code-open config validate
 ```
 
 ### Claude Code Integration
 
 ```bash
 # Run Claude Code through the router
-cco code [args...]
+cco code [args...]  # or claude-code-open code [args...]
 
 # Examples:
-cco code --help
+cco code --help  # or claude-code-open code --help
 cco code "Write a Python script to sort a list"
 cco code --resume session-name
 ```
@@ -487,6 +538,11 @@ After=network.target
 Type=simple
 User=your-user
 ExecStart=/usr/local/bin/cco start
+# Or if using go install without symlink:
+# ExecStart=%h/go/bin/claude-code-open start
+# Or with dynamic Go path:
+# ExecStartPre=/usr/bin/env bash -c 'echo "GOPATH: $(go env GOPATH)"'
+# ExecStart=/usr/bin/env bash -c '"$(go env GOPATH)/bin/claude-code-open" start'
 Restart=always
 RestartSec=5
 
@@ -560,9 +616,9 @@ The router provides basic operational metrics through logs:
 ### Common Issues
 
 **Service won't start:**
-- Check configuration with `cco config validate`
+- Check configuration with `cco config validate` (or `claude-code-open config validate`)
 - Ensure port is available with `netstat -ln | grep :6970`
-- Check logs with `cco start --verbose`
+- Check logs with `cco start --verbose` (or `claude-code-open start --verbose`)
 
 **Authentication errors:**
 - Verify provider API keys in configuration
@@ -582,7 +638,7 @@ The router provides basic operational metrics through logs:
 ### Debug Mode
 
 ```bash
-cco start --verbose
+cco start --verbose  # or claude-code-open start --verbose
 ```
 
 This enables detailed logging of:
