@@ -61,24 +61,24 @@ func TestGeminiProvider_TransformRequest(t *testing.T) {
 	provider := NewGeminiProvider()
 
 	// Test Anthropic to Gemini request transformation
-	anthropicRequest := map[string]interface{}{
+	anthropicRequest := map[string]any{
 		"model":      "claude-3-5-sonnet",
 		"system":     "You are a helpful assistant",
 		"max_tokens": 100,
-		"messages": []interface{}{
-			map[string]interface{}{
+		"messages": []any{
+			map[string]any{
 				"role":    "user",
 				"content": "Hello, world!",
 			},
 		},
-		"tools": []interface{}{
-			map[string]interface{}{
+		"tools": []any{
+			map[string]any{
 				"name":        "get_weather",
 				"description": "Get current weather",
-				"input_schema": map[string]interface{}{
+				"input_schema": map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"location": map[string]interface{}{
+					"properties": map[string]any{
+						"location": map[string]any{
 							"type":        "string",
 							"description": "City name",
 						},
@@ -95,15 +95,15 @@ func TestGeminiProvider_TransformRequest(t *testing.T) {
 	result, err := provider.TransformRequest(anthropicJSON)
 	require.NoError(t, err)
 
-	var geminiReq map[string]interface{}
+	var geminiReq map[string]any
 	err = json.Unmarshal(result, &geminiReq)
 	require.NoError(t, err)
 
 	// Verify system instructions conversion
 	if systemInstructions, ok := geminiReq["systemInstruction"]; ok {
-		systemInstr := systemInstructions.(map[string]interface{})
-		parts := systemInstr["parts"].([]interface{})
-		firstPart := parts[0].(map[string]interface{})
+		systemInstr := systemInstructions.(map[string]any)
+		parts := systemInstr["parts"].([]any)
+		firstPart := parts[0].(map[string]any)
 		assert.Equal(t, "You are a helpful assistant", firstPart["text"])
 	}
 
@@ -111,12 +111,12 @@ func TestGeminiProvider_TransformRequest(t *testing.T) {
 	assert.NotContains(t, geminiReq, "model", "model should not be in request body for Gemini")
 
 	// Verify contents array structure (Gemini format)
-	contents, ok := geminiReq["contents"].([]interface{})
+	contents, ok := geminiReq["contents"].([]any)
 	require.True(t, ok, "contents should be an array")
 	require.GreaterOrEqual(t, len(contents), 1, "should have at least one content")
 
 	// Verify generation config
-	genConfig, ok := geminiReq["generationConfig"].(map[string]interface{})
+	genConfig, ok := geminiReq["generationConfig"].(map[string]any)
 	if ok {
 		assert.Equal(t, float64(100), genConfig["maxOutputTokens"], "should set maxOutputTokens")
 	}
@@ -125,15 +125,15 @@ func TestGeminiProvider_TransformRequest(t *testing.T) {
 func TestGeminiProvider_Transform(t *testing.T) {
 	provider := NewGeminiProvider()
 
-	geminiResponse := map[string]interface{}{
+	geminiResponse := map[string]any{
 		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
-		"candidates": []map[string]interface{}{
+		"candidates": []map[string]any{
 			{
 				"index": 0,
-				"content": map[string]interface{}{
+				"content": map[string]any{
 					"role": "model",
-					"parts": []map[string]interface{}{
+					"parts": []map[string]any{
 						{
 							"text": "Hello! How can I help you today?",
 						},
@@ -142,7 +142,7 @@ func TestGeminiProvider_Transform(t *testing.T) {
 				"finishReason": "STOP",
 			},
 		},
-		"usageMetadata": map[string]interface{}{
+		"usageMetadata": map[string]any{
 			"promptTokenCount":     9,
 			"candidatesTokenCount": 12,
 			"totalTokenCount":      21,
@@ -155,7 +155,7 @@ func TestGeminiProvider_Transform(t *testing.T) {
 	result, err := provider.TransformResponse(geminiJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
@@ -166,11 +166,11 @@ func TestGeminiProvider_Transform(t *testing.T) {
 	assert.Equal(t, "gemini-2.0-flash", anthropicResp["model"])
 
 	// Check content
-	content, ok := anthropicResp["content"].([]interface{})
+	content, ok := anthropicResp["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, content, 1)
 
-	textBlock := content[0].(map[string]interface{})
+	textBlock := content[0].(map[string]any)
 	assert.Equal(t, "text", textBlock["type"])
 	text, ok := textBlock["text"]
 	require.True(t, ok)
@@ -181,7 +181,7 @@ func TestGeminiProvider_Transform(t *testing.T) {
 	}
 
 	// Check usage
-	usage, ok := anthropicResp["usage"].(map[string]interface{})
+	usage, ok := anthropicResp["usage"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, float64(9), usage["input_tokens"])
 	assert.Equal(t, float64(12), usage["output_tokens"])
@@ -228,19 +228,19 @@ func TestGeminiProvider_ConvertStopReason(t *testing.T) {
 func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 	provider := NewGeminiProvider()
 
-	geminiResponse := map[string]interface{}{
+	geminiResponse := map[string]any{
 		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
-		"candidates": []map[string]interface{}{
+		"candidates": []map[string]any{
 			{
 				"index": 0,
-				"content": map[string]interface{}{
+				"content": map[string]any{
 					"role": "model",
-					"parts": []map[string]interface{}{
+					"parts": []map[string]any{
 						{
-							"functionCall": map[string]interface{}{
+							"functionCall": map[string]any{
 								"name": "get_weather",
-								"args": map[string]interface{}{
+								"args": map[string]any{
 									"location": "San Francisco",
 									"unit":     "celsius",
 								},
@@ -251,7 +251,7 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 				"finishReason": "STOP",
 			},
 		},
-		"usageMetadata": map[string]interface{}{
+		"usageMetadata": map[string]any{
 			"promptTokenCount":     9,
 			"candidatesTokenCount": 12,
 			"totalTokenCount":      21,
@@ -264,16 +264,16 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 	result, err := provider.TransformResponse(geminiJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
 	// Check content contains tool use
-	content, ok := anthropicResp["content"].([]interface{})
+	content, ok := anthropicResp["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, content, 1)
 
-	toolBlock := content[0].(map[string]interface{})
+	toolBlock := content[0].(map[string]any)
 	assert.Equal(t, "tool_use", toolBlock["type"])
 
 	id, ok := toolBlock["id"]
@@ -293,7 +293,7 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 	}
 
 	// Check tool input
-	input, ok := toolBlock["input"].(map[string]interface{})
+	input, ok := toolBlock["input"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "San Francisco", input["location"])
 	assert.Equal(t, "celsius", input["unit"])
@@ -311,8 +311,8 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 func TestGeminiProvider_ErrorHandling(t *testing.T) {
 	provider := NewGeminiProvider()
 
-	errorResponse := map[string]interface{}{
-		"error": map[string]interface{}{
+	errorResponse := map[string]any{
+		"error": map[string]any{
 			"code":    400,
 			"message": "Invalid API key",
 			"status":  "UNAUTHENTICATED",
@@ -325,13 +325,13 @@ func TestGeminiProvider_ErrorHandling(t *testing.T) {
 	result, err := provider.TransformResponse(errorJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
 	assert.Equal(t, "error", anthropicResp["type"])
 
-	errorInfo, ok := anthropicResp["error"].(map[string]interface{})
+	errorInfo, ok := anthropicResp["error"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "authentication_error", errorInfo["type"])
 	assert.Equal(t, "Invalid API key", errorInfo["message"])
@@ -342,15 +342,15 @@ func TestGeminiProvider_TransformStream(t *testing.T) {
 	state := &StreamState{}
 
 	// Test message start chunk
-	messageStartChunk := map[string]interface{}{
+	messageStartChunk := map[string]any{
 		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
-		"candidates": []map[string]interface{}{
+		"candidates": []map[string]any{
 			{
 				"index": 0,
-				"content": map[string]interface{}{
+				"content": map[string]any{
 					"role": "model",
-					"parts": []map[string]interface{}{
+					"parts": []map[string]any{
 						{
 							"text": "Hello!",
 						},
@@ -376,16 +376,16 @@ func TestGeminiProvider_TransformStream(t *testing.T) {
 	assert.True(t, state.MessageStartSent)
 
 	// Test finish chunk
-	finishChunk := map[string]interface{}{
+	finishChunk := map[string]any{
 		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
-		"candidates": []map[string]interface{}{
+		"candidates": []map[string]any{
 			{
 				"index":        0,
 				"finishReason": "STOP",
 			},
 		},
-		"usageMetadata": map[string]interface{}{
+		"usageMetadata": map[string]any{
 			"candidatesTokenCount": 5,
 		},
 	}
@@ -408,19 +408,19 @@ func TestGeminiProvider_StreamingFunctionCalls(t *testing.T) {
 	state := &StreamState{}
 
 	// Function call chunk
-	functionCallChunk := map[string]interface{}{
+	functionCallChunk := map[string]any{
 		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
-		"candidates": []map[string]interface{}{
+		"candidates": []map[string]any{
 			{
 				"index": 0,
-				"content": map[string]interface{}{
+				"content": map[string]any{
 					"role": "model",
-					"parts": []map[string]interface{}{
+					"parts": []map[string]any{
 						{
-							"functionCall": map[string]interface{}{
+							"functionCall": map[string]any{
 								"name": "get_current_time",
-								"args": map[string]interface{}{
+								"args": map[string]any{
 									"timezone": "UTC",
 								},
 							},
@@ -450,7 +450,7 @@ func TestGeminiProvider_StreamingFunctionCalls(t *testing.T) {
 func TestGeminiProvider_ConvertUsage(t *testing.T) {
 	provider := NewGeminiProvider()
 
-	usage := map[string]interface{}{
+	usage := map[string]any{
 		"promptTokenCount":     100,
 		"candidatesTokenCount": 50,
 		"totalTokenCount":      150,
@@ -491,10 +491,10 @@ func TestGeminiProvider_MapGeminiErrorType(t *testing.T) {
 func TestGeminiProvider_EmptyContent(t *testing.T) {
 	provider := NewGeminiProvider()
 
-	geminiResponse := map[string]interface{}{
+	geminiResponse := map[string]any{
 		"responseId":   "gemini-response-123",
 		"modelVersion": "gemini-2.0-flash",
-		"candidates": []map[string]interface{}{
+		"candidates": []map[string]any{
 			{
 				"index":        0,
 				"finishReason": "STOP",
@@ -509,16 +509,16 @@ func TestGeminiProvider_EmptyContent(t *testing.T) {
 	result, err := provider.TransformResponse(geminiJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
 	// Should have empty text content
-	content, ok := anthropicResp["content"].([]interface{})
+	content, ok := anthropicResp["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, content, 1)
 
-	textBlock := content[0].(map[string]interface{})
+	textBlock := content[0].(map[string]any)
 	assert.Equal(t, "text", textBlock["type"])
 	text, ok := textBlock["text"]
 	require.True(t, ok)

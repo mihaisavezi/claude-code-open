@@ -51,9 +51,9 @@ func TestProxyIntegration(t *testing.T) {
 	handler := handlers.NewProxyHandler(cfgMgr, registry, logger)
 
 	// Create test request
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"model": "test-model",
-		"messages": []map[string]interface{}{
+		"messages": []map[string]any{
 			{
 				"role":    "user",
 				"content": "Hello, world!",

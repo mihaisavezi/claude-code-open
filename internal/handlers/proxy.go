@@ -462,7 +462,7 @@ func (h *ProxyHandler) flushResponse(w http.ResponseWriter) {
 	}
 }
 
-func (h *ProxyHandler) httpError(w http.ResponseWriter, code int, format string, args ...interface{}) {
+func (h *ProxyHandler) httpError(w http.ResponseWriter, code int, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	h.logger.Error("HTTP Error", "code", code, "message", msg)
 	http.Error(w, msg, code)
@@ -516,9 +516,9 @@ func (h *ProxyHandler) logResponseTokens(respBody []byte, statusCode int, inputT
 	}
 
 	// Try to extract output tokens from response
-	var response map[string]interface{}
+	var response map[string]any
 	if err := json.Unmarshal(respBody, &response); err == nil {
-		if usage, ok := response["usage"].(map[string]interface{}); ok {
+		if usage, ok := response["usage"].(map[string]any); ok {
 			if outputTokens, ok := usage["output_tokens"]; ok {
 				logFields = append(logFields, "output_tokens", outputTokens)
 			}

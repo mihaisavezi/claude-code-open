@@ -64,7 +64,7 @@ func IsStreamingContentType(contentType string) bool {
 }
 
 // FormatSSEEvent formats data as a Server-Sent Event
-func FormatSSEEvent(eventType string, data interface{}) []byte {
+func FormatSSEEvent(eventType string, data any) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		// Return a basic error event if marshalling fails
@@ -75,8 +75,8 @@ func FormatSSEEvent(eventType string, data interface{}) []byte {
 }
 
 // MapTokenUsage maps token usage from source format to Anthropic format
-func MapTokenUsage(sourceUsage map[string]interface{}, sourceMapping TokenMapping) map[string]interface{} {
-	anthropicUsage := make(map[string]interface{})
+func MapTokenUsage(sourceUsage map[string]any, sourceMapping TokenMapping) map[string]any {
+	anthropicUsage := make(map[string]any)
 
 	// Map basic token fields
 	if promptTokens, ok := sourceUsage[sourceMapping.InputTokens]; ok {
@@ -88,7 +88,7 @@ func MapTokenUsage(sourceUsage map[string]interface{}, sourceMapping TokenMappin
 	}
 
 	// Handle detailed token information
-	if promptDetails, ok := sourceUsage["prompt_tokens_details"].(map[string]interface{}); ok {
+	if promptDetails, ok := sourceUsage["prompt_tokens_details"].(map[string]any); ok {
 		if cachedTokens, ok := promptDetails[sourceMapping.CacheReadInputTokens]; ok {
 			anthropicUsage[AnthropicTokenMapping.CacheReadInputTokens] = cachedTokens
 		}
@@ -98,7 +98,7 @@ func MapTokenUsage(sourceUsage map[string]interface{}, sourceMapping TokenMappin
 		}
 	}
 
-	if completionDetails, ok := sourceUsage["completion_tokens_details"].(map[string]interface{}); ok {
+	if completionDetails, ok := sourceUsage["completion_tokens_details"].(map[string]any); ok {
 		for key, value := range completionDetails {
 			anthropicUsage["completion_"+key] = value
 		}
@@ -129,10 +129,10 @@ func ConvertStopReason(reason string) *string {
 }
 
 // RemoveFieldsRecursively removes specified fields from nested JSON structures
-func RemoveFieldsRecursively(data interface{}, fieldsToRemove []string) interface{} {
+func RemoveFieldsRecursively(data any, fieldsToRemove []string) any {
 	switch v := data.(type) {
-	case map[string]interface{}:
-		result := make(map[string]interface{})
+	case map[string]any:
+		result := make(map[string]any)
 
 		for key, value := range v {
 			shouldRemove := false
@@ -150,8 +150,8 @@ func RemoveFieldsRecursively(data interface{}, fieldsToRemove []string) interfac
 		}
 
 		return result
-	case []interface{}:
-		result := make([]interface{}, len(v))
+	case []any:
+		result := make([]any, len(v))
 		for i, item := range v {
 			result[i] = RemoveFieldsRecursively(item, fieldsToRemove)
 		}
@@ -163,12 +163,12 @@ func RemoveFieldsRecursively(data interface{}, fieldsToRemove []string) interfac
 }
 
 // CreateAnthropicContent creates Anthropic content blocks from text
-func CreateAnthropicContent(text string) []map[string]interface{} {
+func CreateAnthropicContent(text string) []map[string]any {
 	if text == "" {
 		text = ""
 	}
 
-	return []map[string]interface{}{
+	return []map[string]any{
 		{
 			"type": "text",
 			"text": text,
@@ -177,22 +177,22 @@ func CreateAnthropicContent(text string) []map[string]interface{} {
 }
 
 // CreateMessageStartEvent creates a standard Anthropic message_start event
-func CreateMessageStartEvent(messageID, model string, usage map[string]interface{}) map[string]interface{} {
+func CreateMessageStartEvent(messageID, model string, usage map[string]any) map[string]any {
 	if usage == nil {
-		usage = map[string]interface{}{
+		usage = map[string]any{
 			"input_tokens":  0,
 			"output_tokens": 1,
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "message_start",
-		"message": map[string]interface{}{
+		"message": map[string]any{
 			"id":            messageID,
 			"type":          "message",
 			"role":          "assistant",
 			"model":         model,
-			"content":       []interface{}{},
+			"content":       []any{},
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage":         usage,
@@ -212,18 +212,18 @@ func ExtractModelFromConfig(modelConfig string) (provider, model string) {
 
 // ProviderInterface defines methods needed for HandleFinishReason
 type ProviderInterface interface {
-	formatSSEEvent(eventType string, data map[string]interface{}) []byte
+	formatSSEEvent(eventType string, data map[string]any) []byte
 	convertStopReason(reason string) *string
 }
 
 // HandleFinishReason processes finish reasons and sends appropriate events
-func HandleFinishReason(p ProviderInterface, reason string, chunk map[string]interface{}, state *StreamState, getUsage func(map[string]interface{}) map[string]interface{}) []byte {
+func HandleFinishReason(p ProviderInterface, reason string, chunk map[string]any, state *StreamState, getUsage func(map[string]any) map[string]any) []byte {
 	var events []byte
 
 	// Send content_block_stop for all active content blocks
 	for index, contentBlock := range state.ContentBlocks {
 		if contentBlock.StartSent && !contentBlock.StopSent {
-			contentStopEvent := map[string]interface{}{
+			contentStopEvent := map[string]any{
 				"type":  "content_block_stop",
 				"index": index,
 			}
@@ -233,9 +233,9 @@ func HandleFinishReason(p ProviderInterface, reason string, chunk map[string]int
 	}
 
 	// Send message_delta with stop reason
-	messageDeltaEvent := map[string]interface{}{
+	messageDeltaEvent := map[string]any{
 		"type": "message_delta",
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"stop_reason":   p.convertStopReason(reason),
 			"stop_sequence": nil,
 		},
@@ -252,7 +252,7 @@ func HandleFinishReason(p ProviderInterface, reason string, chunk map[string]int
 	events = append(events, p.formatSSEEvent("message_delta", messageDeltaEvent)...)
 
 	// Send message_stop
-	messageStopEvent := map[string]interface{}{
+	messageStopEvent := map[string]any{
 		"type": "message_stop",
 	}
 	events = append(events, p.formatSSEEvent("message_stop", messageStopEvent)...)
@@ -262,17 +262,17 @@ func HandleFinishReason(p ProviderInterface, reason string, chunk map[string]int
 
 // StreamProviderInterface extends ProviderInterface for stream processing
 type StreamProviderInterface interface {
-	formatSSEEvent(eventType string, data map[string]interface{}) []byte
+	formatSSEEvent(eventType string, data map[string]any) []byte
 	convertStopReason(reason string) *string
-	createMessageStartEvent(messageID, model string, chunk map[string]interface{}) map[string]interface{}
-	handleToolCalls(toolCalls []interface{}, state *StreamState) []byte
+	createMessageStartEvent(messageID, model string, chunk map[string]any) map[string]any
+	handleToolCalls(toolCalls []any, state *StreamState) []byte
 	handleTextContent(content string, state *StreamState) []byte
-	handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte
+	handleFinishReason(reason string, chunk map[string]any, state *StreamState) []byte
 }
 
 // ConvertOpenAIStyleToAnthropicStream handles OpenAI-style streaming responses (OpenAI/Nvidia)
 func ConvertOpenAIStyleToAnthropicStream(data []byte, state *StreamState, provider StreamProviderInterface, errorPrefix string) ([]byte, error) {
-	var rawChunk map[string]interface{}
+	var rawChunk map[string]any
 	if err := json.Unmarshal(data, &rawChunk); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal %s streaming response: %w", errorPrefix, err)
 	}
@@ -289,8 +289,8 @@ func ConvertOpenAIStyleToAnthropicStream(data []byte, state *StreamState, provid
 	}
 
 	// Handle choices array
-	if choices, ok := rawChunk["choices"].([]interface{}); ok && len(choices) > 0 {
-		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
+	if choices, ok := rawChunk["choices"].([]any); ok && len(choices) > 0 {
+		if firstChoice, ok := choices[0].(map[string]any); ok {
 			// Send message_start event if not sent yet
 			if !state.MessageStartSent {
 				messageStartEvent := provider.createMessageStartEvent(state.MessageID, state.Model, rawChunk)
@@ -299,14 +299,14 @@ func ConvertOpenAIStyleToAnthropicStream(data []byte, state *StreamState, provid
 			}
 
 			// Handle delta content
-			if delta, ok := firstChoice["delta"].(map[string]interface{}); ok {
+			if delta, ok := firstChoice["delta"].(map[string]any); ok {
 				// Initialize content blocks map if needed
 				if state.ContentBlocks == nil {
 					state.ContentBlocks = make(map[int]*ContentBlockState)
 				}
 
 				// Check if we have tool calls - if so, prioritize them over text content
-				if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
+				if toolCalls, ok := delta["tool_calls"].([]any); ok {
 					toolEvents := provider.handleToolCalls(toolCalls, state)
 					events = append(events, toolEvents...)
 				} else if content, ok := delta["content"].(string); ok && content != "" {
@@ -330,19 +330,19 @@ func ConvertOpenAIStyleToAnthropicStream(data []byte, state *StreamState, provid
 }
 
 // TransformAssistantMessage converts assistant messages with tool_use to tool_calls format
-func TransformAssistantMessage(msgMap map[string]interface{}, content []interface{}) map[string]interface{} {
-	transformedMsg := make(map[string]interface{})
+func TransformAssistantMessage(msgMap map[string]any, content []any) map[string]any {
+	transformedMsg := make(map[string]any)
 	for k, v := range msgMap {
 		transformedMsg[k] = v
 	}
 
 	var (
 		textContent strings.Builder
-		toolCalls   []interface{}
+		toolCalls   []any
 	)
 
 	for _, block := range content {
-		if blockMap, ok := block.(map[string]interface{}); ok {
+		if blockMap, ok := block.(map[string]any); ok {
 			blockType, ok := blockMap["type"].(string)
 			if !ok {
 				continue // Skip invalid block types
@@ -366,10 +366,10 @@ func TransformAssistantMessage(msgMap map[string]interface{}, content []interfac
 							}
 						}
 
-						toolCall := map[string]interface{}{
+						toolCall := map[string]any{
 							"id":   toolCallID,
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      name,
 								"arguments": arguments,
 							},
@@ -395,11 +395,11 @@ func TransformAssistantMessage(msgMap map[string]interface{}, content []interfac
 }
 
 // TransformTools converts tools from Claude format to OpenAI format
-func TransformTools(tools []interface{}) ([]interface{}, error) {
-	transformedTools := make([]interface{}, 0, len(tools))
+func TransformTools(tools []any) ([]any, error) {
+	transformedTools := make([]any, 0, len(tools))
 
 	for _, tool := range tools {
-		toolMap, ok := tool.(map[string]interface{})
+		toolMap, ok := tool.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -412,14 +412,14 @@ func TransformTools(tools []interface{}) ([]interface{}, error) {
 		}
 
 		if name, hasName := toolMap["name"].(string); hasName {
-			openAITool := map[string]interface{}{
+			openAITool := map[string]any{
 				"type": "function",
-				"function": map[string]interface{}{
+				"function": map[string]any{
 					"name": name,
 				},
 			}
 
-			function, ok := openAITool["function"].(map[string]interface{})
+			function, ok := openAITool["function"].(map[string]any)
 			if !ok {
 				continue // Skip invalid function structure
 			}
@@ -441,14 +441,14 @@ func TransformTools(tools []interface{}) ([]interface{}, error) {
 
 // OpenAITransformerInterface defines methods that OpenAI-compatible providers need
 type OpenAITransformerInterface interface {
-	removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{}
-	transformMessages(messages []interface{}) []interface{}
-	transformTools(tools []interface{}) ([]interface{}, error)
+	removeAnthropicSpecificFields(request map[string]any) map[string]any
+	transformMessages(messages []any) []any
+	transformTools(tools []any) ([]any, error)
 }
 
 // TransformAnthropicToOpenAI is a shared transformation function for OpenAI-compatible providers
 func TransformAnthropicToOpenAI(anthropicRequest []byte, transformer OpenAITransformerInterface) ([]byte, error) {
-	var request map[string]interface{}
+	var request map[string]any
 	if err := json.Unmarshal(anthropicRequest, &request); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
 	}
@@ -458,15 +458,15 @@ func TransformAnthropicToOpenAI(anthropicRequest []byte, transformer OpenAITrans
 
 	// Handle system parameter - convert it to a system message in messages array
 	if systemContent, hasSystem := cleanedRequest["system"]; hasSystem {
-		if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
+		if messages, ok := cleanedRequest["messages"].([]any); ok {
 			// Create system message
-			systemMessage := map[string]interface{}{
+			systemMessage := map[string]any{
 				"role":    "system",
 				"content": systemContent,
 			}
 
 			// Prepend system message to messages array
-			newMessages := append([]interface{}{systemMessage}, messages...)
+			newMessages := append([]any{systemMessage}, messages...)
 			cleanedRequest["messages"] = newMessages
 		}
 		// Remove the system parameter as OpenAI doesn't support it at root level
@@ -480,12 +480,12 @@ func TransformAnthropicToOpenAI(anthropicRequest []byte, transformer OpenAITrans
 	}
 
 	// Transform any Anthropic-specific message formats if needed
-	if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
+	if messages, ok := cleanedRequest["messages"].([]any); ok {
 		cleanedRequest["messages"] = transformer.transformMessages(messages)
 	}
 
 	// Transform tools from Claude format to OpenAI format if present
-	if tools, ok := cleanedRequest["tools"].([]interface{}); ok {
+	if tools, ok := cleanedRequest["tools"].([]any); ok {
 		transformedTools, err := transformer.transformTools(tools)
 		if err != nil {
 			// If tools transformation fails, remove tool_choice to prevent validation errors
@@ -565,9 +565,9 @@ type AnthropicContent struct {
 	Text      *string     `json:"text,omitempty"`
 	ID        *string     `json:"id,omitempty"`
 	Name      *string     `json:"name,omitempty"`
-	Input     interface{} `json:"input,omitempty"`
+	Input     any `json:"input,omitempty"`
 	ToolUseID *string     `json:"tool_use_id,omitempty"`
-	Content   interface{} `json:"content,omitempty"`
+	Content   any `json:"content,omitempty"`
 }
 
 type AnthropicUsage struct {
@@ -665,7 +665,7 @@ func convertMessageContent(message *CommonMessage, toolCallIDConverter func(stri
 	// Handle tool calls
 	if len(message.ToolCalls) > 0 {
 		for _, toolCall := range message.ToolCalls {
-			var input map[string]interface{}
+			var input map[string]any
 			if toolCall.Function.Arguments != "" {
 				if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &input); err != nil {
 					return nil, fmt.Errorf("failed to parse tool call arguments: %w", err)
@@ -684,10 +684,10 @@ func convertMessageContent(message *CommonMessage, toolCallIDConverter func(stri
 
 	// Handle tool results
 	if message.Role == "tool" && message.ToolCallID != nil {
-		var toolContent interface{}
+		var toolContent any
 
 		if message.Content != nil {
-			var jsonContent interface{}
+			var jsonContent any
 			if err := json.Unmarshal([]byte(*message.Content), &jsonContent); err == nil {
 				toolContent = jsonContent
 			} else {
@@ -705,7 +705,7 @@ func convertMessageContent(message *CommonMessage, toolCallIDConverter func(stri
 
 	// Handle legacy function calls
 	if message.FunctionCall != nil {
-		var input map[string]interface{}
+		var input map[string]any
 		if message.FunctionCall.Arguments != "" {
 			if err := json.Unmarshal([]byte(message.FunctionCall.Arguments), &input); err != nil {
 				return nil, fmt.Errorf("failed to parse function call arguments: %w", err)

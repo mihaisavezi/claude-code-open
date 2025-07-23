@@ -120,32 +120,32 @@ func (p *NvidiaProvider) convertNvidiaToAnthropicStream(nvidiaData []byte, state
 	return ConvertOpenAIStyleToAnthropicStream(nvidiaData, state, p, "Nvidia")
 }
 
-func (p *NvidiaProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
-	usage := map[string]interface{}{
+func (p *NvidiaProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]any) map[string]any {
+	usage := map[string]any{
 		"input_tokens":  0,
 		"output_tokens": 1,
 	}
 
-	if chunkUsage, ok := firstChunk["usage"].(map[string]interface{}); ok {
+	if chunkUsage, ok := firstChunk["usage"].(map[string]any); ok {
 		if promptTokens, ok := chunkUsage["prompt_tokens"]; ok {
 			usage["input_tokens"] = promptTokens
 		}
 
-		if promptDetails, ok := chunkUsage["prompt_tokens_details"].(map[string]interface{}); ok {
+		if promptDetails, ok := chunkUsage["prompt_tokens_details"].(map[string]any); ok {
 			if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
 				usage["cache_read_input_tokens"] = cachedTokens
 			}
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "message_start",
-		"message": map[string]interface{}{
+		"message": map[string]any{
 			"id":            messageID,
 			"type":          "message",
 			"role":          "assistant",
 			"model":         model,
-			"content":       []interface{}{},
+			"content":       []any{},
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage":         usage,
@@ -153,7 +153,7 @@ func (p *NvidiaProvider) createMessageStartEvent(messageID, model string, firstC
 	}
 }
 
-func (p *NvidiaProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
+func (p *NvidiaProvider) formatSSEEvent(eventType string, data map[string]any) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return []byte("event: error\ndata: {\"error\":\"failed to marshal data\"}\n\n")
@@ -182,11 +182,11 @@ func (p *NvidiaProvider) handleTextContent(content string, state *StreamState) [
 }
 
 // handleToolCalls processes tool call streaming
-func (p *NvidiaProvider) handleToolCalls(toolCalls []interface{}, state *StreamState) []byte {
+func (p *NvidiaProvider) handleToolCalls(toolCalls []any, state *StreamState) []byte {
 	var events []byte
 
 	for _, toolCall := range toolCalls {
-		if tcMap, ok := toolCall.(map[string]interface{}); ok {
+		if tcMap, ok := toolCall.(map[string]any); ok {
 			toolCallEvents := p.handleSingleToolCall(tcMap, state)
 			events = append(events, toolCallEvents...)
 		}
@@ -196,7 +196,7 @@ func (p *NvidiaProvider) handleToolCalls(toolCalls []interface{}, state *StreamS
 }
 
 // handleSingleToolCall processes a single tool call
-func (p *NvidiaProvider) handleSingleToolCall(toolCall map[string]interface{}, state *StreamState) []byte {
+func (p *NvidiaProvider) handleSingleToolCall(toolCall map[string]any, state *StreamState) []byte {
 	var events []byte
 
 	// Parse tool call data
@@ -242,7 +242,7 @@ type NvidiaToolCallData struct {
 }
 
 // parseToolCallData extracts tool call information from Nvidia chunk
-func (p *NvidiaProvider) parseToolCallData(toolCall map[string]interface{}) NvidiaToolCallData {
+func (p *NvidiaProvider) parseToolCallData(toolCall map[string]any) NvidiaToolCallData {
 	data := NvidiaToolCallData{}
 
 	// Parse tool call index
@@ -259,7 +259,7 @@ func (p *NvidiaProvider) parseToolCallData(toolCall map[string]interface{}) Nvid
 
 	// Parse ID and function details
 	data.ID, _ = toolCall["id"].(string)
-	if function, ok := toolCall["function"].(map[string]interface{}); ok {
+	if function, ok := toolCall["function"].(map[string]any); ok {
 		data.FunctionName, _ = function["name"].(string)
 		data.Arguments, _ = function["arguments"].(string)
 	}
@@ -320,14 +320,14 @@ func (p *NvidiaProvider) shouldSendStartEvent(block *ContentBlockState) bool {
 func (p *NvidiaProvider) createContentBlockStartEvent(index int, block *ContentBlockState) []byte {
 	claudeToolID := p.convertToolCallID(block.ToolCallID)
 
-	contentBlockStartEvent := map[string]interface{}{
+	contentBlockStartEvent := map[string]any{
 		"type":  "content_block_start",
 		"index": index,
-		"content_block": map[string]interface{}{
+		"content_block": map[string]any{
 			"type":  "tool_use",
 			"id":    claudeToolID,
 			"name":  block.ToolName,
-			"input": map[string]interface{}{},
+			"input": map[string]any{},
 		},
 	}
 
@@ -359,10 +359,10 @@ func (p *NvidiaProvider) calculateArgumentsDelta(newArgs, oldArgs string) string
 
 // createInputDeltaEvent creates input_json_delta SSE event
 func (p *NvidiaProvider) createInputDeltaEvent(index int, partialJSON string) []byte {
-	inputDeltaEvent := map[string]interface{}{
+	inputDeltaEvent := map[string]any{
 		"type":  "content_block_delta",
 		"index": index,
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"type":         "input_json_delta",
 			"partial_json": partialJSON,
 		},
@@ -385,10 +385,10 @@ func (p *NvidiaProvider) getOrCreateTextBlock(state *StreamState) int {
 
 // createTextBlockStartEvent creates content_block_start event for text
 func (p *NvidiaProvider) createTextBlockStartEvent(index int) []byte {
-	contentBlockStartEvent := map[string]interface{}{
+	contentBlockStartEvent := map[string]any{
 		"type":  "content_block_start",
 		"index": index,
-		"content_block": map[string]interface{}{
+		"content_block": map[string]any{
 			"type": "text",
 			"text": "",
 		},
@@ -399,10 +399,10 @@ func (p *NvidiaProvider) createTextBlockStartEvent(index int) []byte {
 
 // createTextDeltaEvent creates content_block_delta event for text
 func (p *NvidiaProvider) createTextDeltaEvent(index int, text string) []byte {
-	contentDeltaEvent := map[string]interface{}{
+	contentDeltaEvent := map[string]any{
 		"type":  "content_block_delta",
 		"index": index,
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"type": "text_delta",
 			"text": text,
 		},
@@ -412,9 +412,9 @@ func (p *NvidiaProvider) createTextDeltaEvent(index int, text string) []byte {
 }
 
 // handleFinishReason processes finish reasons and sends appropriate events
-func (p *NvidiaProvider) handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte {
-	return HandleFinishReason(p, reason, chunk, state, func(chunk map[string]interface{}) map[string]interface{} {
-		if usage, ok := chunk["usage"].(map[string]interface{}); ok {
+func (p *NvidiaProvider) handleFinishReason(reason string, chunk map[string]any, state *StreamState) []byte {
+	return HandleFinishReason(p, reason, chunk, state, func(chunk map[string]any) map[string]any {
+		if usage, ok := chunk["usage"].(map[string]any); ok {
 			return p.convertUsage(usage)
 		}
 
@@ -423,8 +423,8 @@ func (p *NvidiaProvider) handleFinishReason(reason string, chunk map[string]inte
 }
 
 // convertUsage handles usage information conversion
-func (p *NvidiaProvider) convertUsage(usage map[string]interface{}) map[string]interface{} {
-	anthropicUsage := make(map[string]interface{})
+func (p *NvidiaProvider) convertUsage(usage map[string]any) map[string]any {
+	anthropicUsage := make(map[string]any)
 
 	// Map token fields
 	if promptTokens, ok := usage["prompt_tokens"]; ok {
@@ -436,7 +436,7 @@ func (p *NvidiaProvider) convertUsage(usage map[string]interface{}) map[string]i
 	}
 
 	// Handle cached tokens
-	if promptDetails, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
+	if promptDetails, ok := usage["prompt_tokens_details"].(map[string]any); ok {
 		if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
 			anthropicUsage["cache_read_input_tokens"] = cachedTokens
 		}
@@ -456,28 +456,28 @@ func (p *NvidiaProvider) transformAnthropicToOpenAI(anthropicRequest []byte) ([]
 }
 
 // Helper methods for transformAnthropicToOpenAI (reused from OpenAI provider logic)
-func (p *NvidiaProvider) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
+func (p *NvidiaProvider) removeAnthropicSpecificFields(request map[string]any) map[string]any {
 	fieldsToRemove := []string{"cache_control"}
 
 	if store, hasStore := request["store"]; !hasStore || store != true {
 		fieldsToRemove = append(fieldsToRemove, "metadata")
 	}
 
-	cleaned := p.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
+	cleaned := p.removeFieldsRecursively(request, fieldsToRemove).(map[string]any)
 
 	if tools, hasTools := cleaned["tools"]; !hasTools || tools == nil {
 		delete(cleaned, "tool_choice")
-	} else if toolsArray, ok := tools.([]interface{}); ok && len(toolsArray) == 0 {
+	} else if toolsArray, ok := tools.([]any); ok && len(toolsArray) == 0 {
 		delete(cleaned, "tool_choice")
 	}
 
 	return cleaned
 }
 
-func (p *NvidiaProvider) removeFieldsRecursively(data interface{}, fieldsToRemove []string) interface{} {
+func (p *NvidiaProvider) removeFieldsRecursively(data any, fieldsToRemove []string) any {
 	switch v := data.(type) {
-	case map[string]interface{}:
-		result := make(map[string]interface{})
+	case map[string]any:
+		result := make(map[string]any)
 
 		for key, value := range v {
 			shouldRemove := false
@@ -495,8 +495,8 @@ func (p *NvidiaProvider) removeFieldsRecursively(data interface{}, fieldsToRemov
 		}
 
 		return result
-	case []interface{}:
-		result := make([]interface{}, len(v))
+	case []any:
+		result := make([]any, len(v))
 		for i, item := range v {
 			result[i] = p.removeFieldsRecursively(item, fieldsToRemove)
 		}
@@ -507,18 +507,18 @@ func (p *NvidiaProvider) removeFieldsRecursively(data interface{}, fieldsToRemov
 	}
 }
 
-func (p *NvidiaProvider) transformTools(tools []interface{}) ([]interface{}, error) {
+func (p *NvidiaProvider) transformTools(tools []any) ([]any, error) {
 	return TransformTools(tools)
 }
 
-func (p *NvidiaProvider) transformMessages(messages []interface{}) []interface{} {
-	transformedMessages := make([]interface{}, 0, len(messages))
+func (p *NvidiaProvider) transformMessages(messages []any) []any {
+	transformedMessages := make([]any, 0, len(messages))
 
 	for _, message := range messages {
-		if msgMap, ok := message.(map[string]interface{}); ok {
+		if msgMap, ok := message.(map[string]any); ok {
 			if role, ok := msgMap["role"].(string); ok {
 				if role == "user" {
-					if content, ok := msgMap["content"].([]interface{}); ok {
+					if content, ok := msgMap["content"].([]any); ok {
 						toolResultMessages := p.extractToolResults(content)
 						if len(toolResultMessages) > 0 {
 							transformedMessages = append(transformedMessages, toolResultMessages...)
@@ -526,7 +526,7 @@ func (p *NvidiaProvider) transformMessages(messages []interface{}) []interface{}
 						}
 					}
 				} else if role == "assistant" {
-					if content, ok := msgMap["content"].([]interface{}); ok {
+					if content, ok := msgMap["content"].([]any); ok {
 						transformedMsg := p.transformAssistantMessage(msgMap, content)
 						transformedMessages = append(transformedMessages, transformedMsg)
 
@@ -542,16 +542,16 @@ func (p *NvidiaProvider) transformMessages(messages []interface{}) []interface{}
 	return transformedMessages
 }
 
-func (p *NvidiaProvider) extractToolResults(content []interface{}) []interface{} {
-	var toolMessages []interface{}
+func (p *NvidiaProvider) extractToolResults(content []any) []any {
+	var toolMessages []any
 
 	for _, block := range content {
-		if blockMap, ok := block.(map[string]interface{}); ok {
+		if blockMap, ok := block.(map[string]any); ok {
 			if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_result" {
 				if toolUseID, ok := blockMap["tool_use_id"].(string); ok {
 					toolCallID := strings.Replace(toolUseID, "toolu_", "call_", 1)
 
-					toolMessage := map[string]interface{}{
+					toolMessage := map[string]any{
 						"role":         "tool",
 						"tool_call_id": toolCallID,
 						"content":      blockMap["content"],
@@ -569,6 +569,6 @@ func (p *NvidiaProvider) extractToolResults(content []interface{}) []interface{}
 	return nil
 }
 
-func (p *NvidiaProvider) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}) map[string]interface{} {
+func (p *NvidiaProvider) transformAssistantMessage(msgMap map[string]any, content []any) map[string]any {
 	return TransformAssistantMessage(msgMap, content)
 }

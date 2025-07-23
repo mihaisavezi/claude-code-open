@@ -161,7 +161,7 @@ Implement IsStreaming to detect if a response is streamed:
 Implement TransformRequest for converting Claude requests to provider format:
 
 	func (p *NewProvider) TransformRequest(request []byte) ([]byte, error) {
-		var claudeRequest map[string]interface{}
+		var claudeRequest map[string]any
 		if err := json.Unmarshal(request, &claudeRequest); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal Claude request: %w", err)
 		}
@@ -179,7 +179,7 @@ Note: This method transforms Claude requests TO provider format.
 Implement TransformResponse for complete responses (Provider → Claude format):
 
 	func (p *NewProvider) TransformResponse(response []byte) ([]byte, error) {
-		var providerResponse map[string]interface{}
+		var providerResponse map[string]any
 		if err := json.Unmarshal(response, &providerResponse); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal provider response: %w", err)
 		}
@@ -197,7 +197,7 @@ Note: This method transforms provider responses TO Claude format.
 Implement TransformStream for real-time chunk processing (Provider → Claude format):
 
 	func (p *NewProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
-		var providerChunk map[string]interface{}
+		var providerChunk map[string]any
 		if err := json.Unmarshal(chunk, &providerChunk); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal chunk: %w", err)
 		}
@@ -226,7 +226,7 @@ The StreamState tracks streaming conversion across multiple chunks:
 		MessageStartSent  bool
 		MessageID         string
 		Model             string
-		InitialUsage      map[string]interface{}
+		InitialUsage      map[string]any
 		ContentBlocks     map[int]*ContentBlockState
 		CurrentIndex      int
 	}
@@ -267,10 +267,10 @@ For streaming text responses:
 
 		// Send content_block_start if needed
 		if !contentBlock.StartSent {
-			startEvent := map[string]interface{}{
+			startEvent := map[string]any{
 				"type":  "content_block_start",
 				"index": state.CurrentIndex,
-				"content_block": map[string]interface{}{
+				"content_block": map[string]any{
 					"type": "text",
 					"text": "",
 				},
@@ -280,10 +280,10 @@ For streaming text responses:
 		}
 
 		// Send content_block_delta
-		deltaEvent := map[string]interface{}{
+		deltaEvent := map[string]any{
 			"type":  "content_block_delta",
 			"index": state.CurrentIndex,
-			"delta": map[string]interface{}{
+			"delta": map[string]any{
 				"type": "text_delta",
 				"text": content,
 			},
@@ -295,9 +295,9 @@ For streaming text responses:
 For streaming tool calls:
 
 	// Check for tool calls
-	if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
+	if toolCalls, ok := delta["tool_calls"].([]any); ok {
 		for _, toolCall := range toolCalls {
-			if tcMap, ok := toolCall.(map[string]interface{}); ok {
+			if tcMap, ok := toolCall.(map[string]any); ok {
 				// Process individual tool call
 				toolCallID, _ := tcMap["id"].(string)
 
@@ -323,14 +323,14 @@ For streaming tool calls:
 				// Send content_block_start for tool_use if not sent
 				if !contentBlock.StartSent {
 					claudeToolID := "toolu_" + strings.TrimPrefix(toolCallID, "call_")
-					startEvent := map[string]interface{}{
+					startEvent := map[string]any{
 						"type":  "content_block_start",
 						"index": contentBlockIndex,
-						"content_block": map[string]interface{}{
+						"content_block": map[string]any{
 							"type":  "tool_use",
 							"id":    claudeToolID,
 							"name":  functionName,
-							"input": map[string]interface{}{},
+							"input": map[string]any{},
 						},
 					}
 					events = append(events, formatSSEEvent("content_block_start", startEvent)...)
@@ -353,10 +353,10 @@ For streaming tool calls:
 
 					contentBlock.Arguments = arguments
 
-					deltaEvent := map[string]interface{}{
+					deltaEvent := map[string]any{
 						"type":  "content_block_delta",
 						"index": contentBlockIndex,
-						"delta": map[string]interface{}{
+						"delta": map[string]any{
 							"type":         "input_json_delta",
 							"partial_json": newPart,
 						},

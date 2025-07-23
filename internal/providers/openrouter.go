@@ -69,7 +69,7 @@ func (p *OpenRouterProvider) TransformResponse(response []byte) ([]byte, error) 
 }
 
 func (p *OpenRouterProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
-	var orChunk map[string]interface{}
+	var orChunk map[string]any
 	if err := json.Unmarshal(chunk, &orChunk); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OpenRouter chunk: %w", err)
 	}
@@ -91,8 +91,8 @@ func (p *OpenRouterProvider) TransformStream(chunk []byte, state *StreamState) (
 	}
 
 	// Handle choices array
-	if choices, ok := orChunk["choices"].([]interface{}); ok && len(choices) > 0 {
-		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
+	if choices, ok := orChunk["choices"].([]any); ok && len(choices) > 0 {
+		if firstChoice, ok := choices[0].(map[string]any); ok {
 			// Send message_start event if not sent yet
 			if !state.MessageStartSent {
 				messageStartEvent := p.createMessageStartEvent(state.MessageID, state.Model, orChunk)
@@ -101,9 +101,9 @@ func (p *OpenRouterProvider) TransformStream(chunk []byte, state *StreamState) (
 			}
 
 			// Handle delta content
-			if delta, ok := firstChoice["delta"].(map[string]interface{}); ok {
+			if delta, ok := firstChoice["delta"].(map[string]any); ok {
 				// Check if we have tool calls - if so, prioritize them over text content
-				if toolCalls, ok := delta["tool_calls"].([]interface{}); ok {
+				if toolCalls, ok := delta["tool_calls"].([]any); ok {
 					toolEvents := p.handleToolCalls(toolCalls, state)
 					events = append(events, toolEvents...)
 				} else if content, ok := delta["content"].(string); ok && content != "" {
@@ -127,21 +127,21 @@ func (p *OpenRouterProvider) TransformStream(chunk []byte, state *StreamState) (
 }
 
 // convertContent handles both text content and tool calls conversion
-func (p *OpenRouterProvider) convertContent(message map[string]interface{}) []map[string]interface{} {
-	var content []map[string]interface{}
+func (p *OpenRouterProvider) convertContent(message map[string]any) []map[string]any {
+	var content []map[string]any
 
 	// Handle text content
 	if textContent, ok := message["content"].(string); ok && textContent != "" {
-		content = append(content, map[string]interface{}{
+		content = append(content, map[string]any{
 			"type": "text",
 			"text": textContent,
 		})
 	}
 
 	// Handle tool calls
-	if toolCalls, ok := message["tool_calls"].([]interface{}); ok {
+	if toolCalls, ok := message["tool_calls"].([]any); ok {
 		for _, toolCall := range toolCalls {
-			if tcMap, ok := toolCall.(map[string]interface{}); ok {
+			if tcMap, ok := toolCall.(map[string]any); ok {
 				// Convert tool call to Claude format
 				toolContent := p.convertToolCall(tcMap)
 				if toolContent != nil {
@@ -153,7 +153,7 @@ func (p *OpenRouterProvider) convertContent(message map[string]interface{}) []ma
 
 	// Return at least empty text content if nothing else
 	if len(content) == 0 {
-		content = append(content, map[string]interface{}{
+		content = append(content, map[string]any{
 			"type": "text",
 			"text": "",
 		})
@@ -163,8 +163,8 @@ func (p *OpenRouterProvider) convertContent(message map[string]interface{}) []ma
 }
 
 // convertToolCall converts OpenRouter tool call to Anthropic tool_use format
-func (p *OpenRouterProvider) convertToolCall(toolCall map[string]interface{}) map[string]interface{} {
-	function, ok := toolCall["function"].(map[string]interface{})
+func (p *OpenRouterProvider) convertToolCall(toolCall map[string]any) map[string]any {
+	function, ok := toolCall["function"].(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -179,7 +179,7 @@ func (p *OpenRouterProvider) convertToolCall(toolCall map[string]interface{}) ma
 	// Convert ID format: call_ -> toolu_
 	claudeID := p.convertToolCallID(toolCallID)
 
-	return map[string]interface{}{
+	return map[string]any{
 		"type":  "tool_use",
 		"id":    claudeID,
 		"name":  functionName,
@@ -188,15 +188,15 @@ func (p *OpenRouterProvider) convertToolCall(toolCall map[string]interface{}) ma
 }
 
 // parseToolArguments parses JSON arguments or returns empty map
-func (p *OpenRouterProvider) parseToolArguments(arguments string) map[string]interface{} {
+func (p *OpenRouterProvider) parseToolArguments(arguments string) map[string]any {
 	if arguments == "" {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 
-	var input map[string]interface{}
+	var input map[string]any
 	if err := json.Unmarshal([]byte(arguments), &input); err != nil {
 		// If parsing fails, use empty input
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 
 	return input
@@ -216,15 +216,15 @@ func (p *OpenRouterProvider) convertToolCallID(toolCallID string) string {
 }
 
 // convertAnnotations handles OpenRouter web search annotations
-func (p *OpenRouterProvider) convertAnnotations(annotations interface{}) interface{} {
+func (p *OpenRouterProvider) convertAnnotations(annotations any) any {
 	// OpenRouter and Claude use the same annotation format according to docs
 	// Just pass through, but we could add validation or transformation here if needed
 	return annotations
 }
 
 // convertUsage handles enhanced usage information conversion
-func (p *OpenRouterProvider) convertUsage(usage map[string]interface{}) map[string]interface{} {
-	anthropicUsage := make(map[string]interface{})
+func (p *OpenRouterProvider) convertUsage(usage map[string]any) map[string]any {
+	anthropicUsage := make(map[string]any)
 
 	// Map token fields
 	if promptTokens, ok := usage["prompt_tokens"]; ok {
@@ -236,7 +236,7 @@ func (p *OpenRouterProvider) convertUsage(usage map[string]interface{}) map[stri
 	}
 
 	// Handle cached tokens
-	if promptDetails, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
+	if promptDetails, ok := usage["prompt_tokens_details"].(map[string]any); ok {
 		if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
 			anthropicUsage["cache_read_input_tokens"] = cachedTokens
 		}
@@ -248,10 +248,10 @@ func (p *OpenRouterProvider) convertUsage(usage map[string]interface{}) map[stri
 	}
 
 	// Handle server tool use (web search) usage
-	if serverToolUse, ok := usage["server_tool_use"].(map[string]interface{}); ok {
+	if serverToolUse, ok := usage["server_tool_use"].(map[string]any); ok {
 		if webSearchRequests, ok := serverToolUse["web_search_requests"]; ok {
 			// Add as additional usage info
-			anthropicUsage["server_tool_use"] = map[string]interface{}{
+			anthropicUsage["server_tool_use"] = map[string]any{
 				"web_search_requests": webSearchRequests,
 			}
 		}
@@ -261,13 +261,13 @@ func (p *OpenRouterProvider) convertUsage(usage map[string]interface{}) map[stri
 }
 
 func (p *OpenRouterProvider) convertToAnthropic(openRouterData []byte) ([]byte, error) {
-	var orResponse map[string]interface{}
+	var orResponse map[string]any
 	if err := json.Unmarshal(openRouterData, &orResponse); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OpenRouter response: %w", err)
 	}
 
 	// Create Anthropic response structure
-	anthropicResponse := make(map[string]interface{})
+	anthropicResponse := make(map[string]any)
 
 	// Copy ID if present
 	if id, ok := orResponse["id"]; ok {
@@ -278,9 +278,9 @@ func (p *OpenRouterProvider) convertToAnthropic(openRouterData []byte) ([]byte, 
 	anthropicResponse["type"] = "message"
 
 	// Extract role and content from choices[0].message
-	if choices, ok := orResponse["choices"].([]interface{}); ok && len(choices) > 0 {
-		if firstChoice, ok := choices[0].(map[string]interface{}); ok {
-			if message, ok := firstChoice["message"].(map[string]interface{}); ok {
+	if choices, ok := orResponse["choices"].([]any); ok && len(choices) > 0 {
+		if firstChoice, ok := choices[0].(map[string]any); ok {
+			if message, ok := firstChoice["message"].(map[string]any); ok {
 				// Extract role
 				if role, ok := message["role"]; ok {
 					anthropicResponse["role"] = role
@@ -309,7 +309,7 @@ func (p *OpenRouterProvider) convertToAnthropic(openRouterData []byte) ([]byte, 
 	}
 
 	// Transform usage object with enhanced handling
-	if usage, ok := orResponse["usage"].(map[string]interface{}); ok {
+	if usage, ok := orResponse["usage"].(map[string]any); ok {
 		anthropicUsage := p.convertUsage(usage)
 		anthropicResponse["usage"] = anthropicUsage
 	}
@@ -349,32 +349,32 @@ func (p *OpenRouterProvider) convertStopReason(openaiReason string) *string {
 	return &defaultReason
 }
 
-func (p *OpenRouterProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
-	usage := map[string]interface{}{
+func (p *OpenRouterProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]any) map[string]any {
+	usage := map[string]any{
 		"input_tokens":  0,
 		"output_tokens": 1,
 	}
 
-	if chunkUsage, ok := firstChunk["usage"].(map[string]interface{}); ok {
+	if chunkUsage, ok := firstChunk["usage"].(map[string]any); ok {
 		if promptTokens, ok := chunkUsage["prompt_tokens"]; ok {
 			usage["input_tokens"] = promptTokens
 		}
 
-		if promptDetails, ok := chunkUsage["prompt_tokens_details"].(map[string]interface{}); ok {
+		if promptDetails, ok := chunkUsage["prompt_tokens_details"].(map[string]any); ok {
 			if cachedTokens, ok := promptDetails["cached_tokens"]; ok {
 				usage["cache_read_input_tokens"] = cachedTokens
 			}
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "message_start",
-		"message": map[string]interface{}{
+		"message": map[string]any{
 			"id":            messageID,
 			"type":          "message",
 			"role":          "assistant",
 			"model":         model,
-			"content":       []interface{}{},
+			"content":       []any{},
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage":         usage,
@@ -382,7 +382,7 @@ func (p *OpenRouterProvider) createMessageStartEvent(messageID, model string, fi
 	}
 }
 
-func (p *OpenRouterProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
+func (p *OpenRouterProvider) formatSSEEvent(eventType string, data map[string]any) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return []byte("event: error\ndata: {\"error\":\"failed to marshal data\"}\n\n")
@@ -411,11 +411,11 @@ func (p *OpenRouterProvider) handleTextContent(content string, state *StreamStat
 }
 
 // handleToolCalls processes tool call streaming
-func (p *OpenRouterProvider) handleToolCalls(toolCalls []interface{}, state *StreamState) []byte {
+func (p *OpenRouterProvider) handleToolCalls(toolCalls []any, state *StreamState) []byte {
 	var events []byte
 
 	for _, toolCall := range toolCalls {
-		if tcMap, ok := toolCall.(map[string]interface{}); ok {
+		if tcMap, ok := toolCall.(map[string]any); ok {
 			toolCallEvents := p.handleSingleToolCall(tcMap, state)
 			events = append(events, toolCallEvents...)
 		}
@@ -425,7 +425,7 @@ func (p *OpenRouterProvider) handleToolCalls(toolCalls []interface{}, state *Str
 }
 
 // handleSingleToolCall processes a single tool call
-func (p *OpenRouterProvider) handleSingleToolCall(toolCall map[string]interface{}, state *StreamState) []byte {
+func (p *OpenRouterProvider) handleSingleToolCall(toolCall map[string]any, state *StreamState) []byte {
 	var events []byte
 
 	// Parse tool call data using helper
@@ -471,7 +471,7 @@ type ToolCallData struct {
 }
 
 // parseToolCallData extracts tool call information from OpenRouter chunk
-func (p *OpenRouterProvider) parseToolCallData(toolCall map[string]interface{}) ToolCallData {
+func (p *OpenRouterProvider) parseToolCallData(toolCall map[string]any) ToolCallData {
 	data := ToolCallData{}
 
 	// Parse tool call index
@@ -488,7 +488,7 @@ func (p *OpenRouterProvider) parseToolCallData(toolCall map[string]interface{}) 
 
 	// Parse ID and function details
 	data.ID, _ = toolCall["id"].(string)
-	if function, ok := toolCall["function"].(map[string]interface{}); ok {
+	if function, ok := toolCall["function"].(map[string]any); ok {
 		data.FunctionName, _ = function["name"].(string)
 		data.Arguments, _ = function["arguments"].(string)
 	}
@@ -551,14 +551,14 @@ func (p *OpenRouterProvider) shouldSendStartEvent(block *ContentBlockState) bool
 func (p *OpenRouterProvider) createContentBlockStartEvent(index int, block *ContentBlockState) []byte {
 	claudeToolID := p.convertToolCallID(block.ToolCallID)
 
-	contentBlockStartEvent := map[string]interface{}{
+	contentBlockStartEvent := map[string]any{
 		"type":  "content_block_start",
 		"index": index,
-		"content_block": map[string]interface{}{
+		"content_block": map[string]any{
 			"type":  "tool_use",
 			"id":    claudeToolID,
 			"name":  block.ToolName,
-			"input": map[string]interface{}{},
+			"input": map[string]any{},
 		},
 	}
 
@@ -577,10 +577,10 @@ func (p *OpenRouterProvider) calculateArgumentsDelta(newArgs, oldArgs string) st
 
 // createInputDeltaEvent creates input_json_delta SSE event
 func (p *OpenRouterProvider) createInputDeltaEvent(index int, partialJSON string) []byte {
-	inputDeltaEvent := map[string]interface{}{
+	inputDeltaEvent := map[string]any{
 		"type":  "content_block_delta",
 		"index": index,
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"type":         "input_json_delta",
 			"partial_json": partialJSON,
 		},
@@ -603,10 +603,10 @@ func (p *OpenRouterProvider) getOrCreateTextBlock(state *StreamState) int {
 
 // createTextBlockStartEvent creates content_block_start event for text
 func (p *OpenRouterProvider) createTextBlockStartEvent(index int) []byte {
-	contentBlockStartEvent := map[string]interface{}{
+	contentBlockStartEvent := map[string]any{
 		"type":  "content_block_start",
 		"index": index,
-		"content_block": map[string]interface{}{
+		"content_block": map[string]any{
 			"type": "text",
 			"text": "",
 		},
@@ -617,10 +617,10 @@ func (p *OpenRouterProvider) createTextBlockStartEvent(index int) []byte {
 
 // createTextDeltaEvent creates content_block_delta event for text
 func (p *OpenRouterProvider) createTextDeltaEvent(index int, text string) []byte {
-	contentDeltaEvent := map[string]interface{}{
+	contentDeltaEvent := map[string]any{
 		"type":  "content_block_delta",
 		"index": index,
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"type": "text_delta",
 			"text": text,
 		},
@@ -630,9 +630,9 @@ func (p *OpenRouterProvider) createTextDeltaEvent(index int, text string) []byte
 }
 
 // handleFinishReason processes finish reasons and sends appropriate events
-func (p *OpenRouterProvider) handleFinishReason(reason string, orChunk map[string]interface{}, state *StreamState) []byte {
-	return HandleFinishReason(p, reason, orChunk, state, func(chunk map[string]interface{}) map[string]interface{} {
-		if usage, ok := chunk["usage"].(map[string]interface{}); ok {
+func (p *OpenRouterProvider) handleFinishReason(reason string, orChunk map[string]any, state *StreamState) []byte {
+	return HandleFinishReason(p, reason, orChunk, state, func(chunk map[string]any) map[string]any {
+		if usage, ok := chunk["usage"].(map[string]any); ok {
 			return p.convertUsage(usage)
 		}
 
@@ -646,7 +646,7 @@ func (p *OpenRouterProvider) transformAnthropicToOpenAI(anthropicRequest []byte)
 }
 
 // removeAnthropicSpecificFields removes fields that OpenAI doesn't support
-func (p *OpenRouterProvider) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
+func (p *OpenRouterProvider) removeAnthropicSpecificFields(request map[string]any) map[string]any {
 	// Remove Claude/Anthropic-specific fields that OpenAI/OpenRouter don't support
 	fieldsToRemove := []string{"cache_control"}
 
@@ -655,12 +655,12 @@ func (p *OpenRouterProvider) removeAnthropicSpecificFields(request map[string]in
 		fieldsToRemove = append(fieldsToRemove, "metadata")
 	}
 
-	cleaned := p.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
+	cleaned := p.removeFieldsRecursively(request, fieldsToRemove).(map[string]any)
 
 	// Handle tool_choice logic: only remove if no tools are present, tools is null, or tools is empty array
 	if tools, hasTools := cleaned["tools"]; !hasTools || tools == nil {
 		delete(cleaned, "tool_choice")
-	} else if toolsArray, ok := tools.([]interface{}); ok && len(toolsArray) == 0 {
+	} else if toolsArray, ok := tools.([]any); ok && len(toolsArray) == 0 {
 		delete(cleaned, "tool_choice")
 	}
 
@@ -668,10 +668,10 @@ func (p *OpenRouterProvider) removeAnthropicSpecificFields(request map[string]in
 }
 
 // removeFieldsRecursively removes specified fields from a nested structure
-func (p *OpenRouterProvider) removeFieldsRecursively(data interface{}, fieldsToRemove []string) interface{} {
+func (p *OpenRouterProvider) removeFieldsRecursively(data any, fieldsToRemove []string) any {
 	switch v := data.(type) {
-	case map[string]interface{}:
-		result := make(map[string]interface{})
+	case map[string]any:
+		result := make(map[string]any)
 
 		for key, value := range v {
 			shouldRemove := false
@@ -689,8 +689,8 @@ func (p *OpenRouterProvider) removeFieldsRecursively(data interface{}, fieldsToR
 		}
 
 		return result
-	case []interface{}:
-		result := make([]interface{}, len(v))
+	case []any:
+		result := make([]any, len(v))
 		for i, item := range v {
 			result[i] = p.removeFieldsRecursively(item, fieldsToRemove)
 		}
@@ -702,21 +702,21 @@ func (p *OpenRouterProvider) removeFieldsRecursively(data interface{}, fieldsToR
 }
 
 // transformTools converts Claude tools to OpenAI format
-func (p *OpenRouterProvider) transformTools(tools []interface{}) ([]interface{}, error) {
+func (p *OpenRouterProvider) transformTools(tools []any) ([]any, error) {
 	return TransformTools(tools)
 }
 
 // transformMessages converts Anthropic messages to OpenAI format
-func (p *OpenRouterProvider) transformMessages(messages []interface{}) []interface{} {
-	transformedMessages := make([]interface{}, 0, len(messages))
+func (p *OpenRouterProvider) transformMessages(messages []any) []any {
+	transformedMessages := make([]any, 0, len(messages))
 
 	for _, message := range messages {
-		if msgMap, ok := message.(map[string]interface{}); ok {
+		if msgMap, ok := message.(map[string]any); ok {
 			// Check role-specific transformations
 			if role, ok := msgMap["role"].(string); ok {
 				if role == "user" {
 					// Transform user messages with tool_result blocks to OpenAI tool message format
-					if content, ok := msgMap["content"].([]interface{}); ok {
+					if content, ok := msgMap["content"].([]any); ok {
 						toolResultMessages := p.extractToolResults(content)
 						if len(toolResultMessages) > 0 {
 							transformedMessages = append(transformedMessages, toolResultMessages...)
@@ -725,7 +725,7 @@ func (p *OpenRouterProvider) transformMessages(messages []interface{}) []interfa
 					}
 				} else if role == "assistant" {
 					// Transform assistant messages with tool_use blocks to OpenAI tool_calls format
-					if content, ok := msgMap["content"].([]interface{}); ok {
+					if content, ok := msgMap["content"].([]any); ok {
 						transformedMsg := p.transformAssistantMessage(msgMap, content)
 						transformedMessages = append(transformedMessages, transformedMsg)
 
@@ -743,18 +743,18 @@ func (p *OpenRouterProvider) transformMessages(messages []interface{}) []interfa
 }
 
 // extractToolResults extracts tool_result blocks and converts them to OpenAI tool messages
-func (p *OpenRouterProvider) extractToolResults(content []interface{}) []interface{} {
-	var toolMessages []interface{}
+func (p *OpenRouterProvider) extractToolResults(content []any) []any {
+	var toolMessages []any
 
 	for _, block := range content {
-		if blockMap, ok := block.(map[string]interface{}); ok {
+		if blockMap, ok := block.(map[string]any); ok {
 			if blockType, ok := blockMap["type"].(string); ok && blockType == MessageTypeToolResult {
 				// Convert tool_result to OpenAI tool message format
 				if toolUseID, ok := blockMap["tool_use_id"].(string); ok {
 					// Convert Claude tool ID format to OpenAI format
 					toolCallID := strings.Replace(toolUseID, "toolu_", "call_", 1)
 
-					toolMessage := map[string]interface{}{
+					toolMessage := map[string]any{
 						"role":         "tool",
 						"tool_call_id": toolCallID,
 						"content":      blockMap["content"],
@@ -773,6 +773,6 @@ func (p *OpenRouterProvider) extractToolResults(content []interface{}) []interfa
 }
 
 // transformAssistantMessage converts assistant messages with tool_use to tool_calls format
-func (p *OpenRouterProvider) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}) map[string]interface{} {
+func (p *OpenRouterProvider) transformAssistantMessage(msgMap map[string]any, content []any) map[string]any {
 	return TransformAssistantMessage(msgMap, content)
 }

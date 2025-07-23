@@ -13,24 +13,24 @@ func TestOpenRouterProvider_TransformRequest(t *testing.T) {
 	provider := NewOpenRouterProvider()
 
 	// Test Anthropic to OpenAI/OpenRouter request transformation
-	anthropicRequest := map[string]interface{}{
+	anthropicRequest := map[string]any{
 		"model":      "claude-3-5-sonnet",
 		"system":     "You are a helpful assistant",
 		"max_tokens": 100,
-		"messages": []interface{}{
-			map[string]interface{}{
+		"messages": []any{
+			map[string]any{
 				"role":    "user",
 				"content": "Hello, world!",
 			},
 		},
-		"tools": []interface{}{
-			map[string]interface{}{
+		"tools": []any{
+			map[string]any{
 				"name":        "get_weather",
 				"description": "Get current weather",
-				"input_schema": map[string]interface{}{
+				"input_schema": map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"location": map[string]interface{}{
+					"properties": map[string]any{
+						"location": map[string]any{
 							"type":        "string",
 							"description": "City name",
 						},
@@ -48,17 +48,17 @@ func TestOpenRouterProvider_TransformRequest(t *testing.T) {
 	result, err := provider.TransformRequest(anthropicJSON)
 	require.NoError(t, err)
 
-	var openrouterReq map[string]interface{}
+	var openrouterReq map[string]any
 	err = json.Unmarshal(result, &openrouterReq)
 	require.NoError(t, err)
 
 	// Verify system message was moved to messages array (OpenAI format)
 	assert.NotContains(t, openrouterReq, "system", "system field should be removed from root")
-	messages, ok := openrouterReq["messages"].([]interface{})
+	messages, ok := openrouterReq["messages"].([]any)
 	require.True(t, ok, "messages should be an array")
 	require.Len(t, messages, 2, "should have system + user message")
 
-	systemMsg := messages[0].(map[string]interface{})
+	systemMsg := messages[0].(map[string]any)
 	assert.Equal(t, "system", systemMsg["role"])
 	assert.Equal(t, "You are a helpful assistant", systemMsg["content"])
 
@@ -67,13 +67,13 @@ func TestOpenRouterProvider_TransformRequest(t *testing.T) {
 	assert.Equal(t, float64(100), openrouterReq["max_completion_tokens"], "should have max_completion_tokens")
 
 	// Verify tools transformation to OpenAI format
-	tools, ok := openrouterReq["tools"].([]interface{})
+	tools, ok := openrouterReq["tools"].([]any)
 	require.True(t, ok, "tools should be an array")
 	require.Len(t, tools, 1, "should have one tool")
 
-	tool := tools[0].(map[string]interface{})
+	tool := tools[0].(map[string]any)
 	assert.Equal(t, "function", tool["type"])
-	function := tool["function"].(map[string]interface{})
+	function := tool["function"].(map[string]any)
 	assert.Equal(t, "get_weather", function["name"])
 	assert.Contains(t, function, "parameters", "should have parameters not input_schema")
 
@@ -85,25 +85,25 @@ func TestOpenRouterProvider_Transform(t *testing.T) {
 	provider := NewOpenRouterProvider()
 
 	// Test OpenRouter response format
-	openRouterResponse := map[string]interface{}{
+	openRouterResponse := map[string]any{
 		"id":     "chatcmpl-123",
 		"object": "chat.completion",
 		"model":  "anthropic/claude-3.5-sonnet",
-		"choices": []interface{}{
-			map[string]interface{}{
+		"choices": []any{
+			map[string]any{
 				"index": 0,
-				"message": map[string]interface{}{
+				"message": map[string]any{
 					"role":    "assistant",
 					"content": "Hello! How can I help you today?",
 				},
 				"finish_reason": "stop",
 			},
 		},
-		"usage": map[string]interface{}{
+		"usage": map[string]any{
 			"prompt_tokens":     25,
 			"completion_tokens": 8,
 			"total_tokens":      33,
-			"prompt_tokens_details": map[string]interface{}{
+			"prompt_tokens_details": map[string]any{
 				"cached_tokens": 10,
 			},
 		},
@@ -114,7 +114,7 @@ func TestOpenRouterProvider_Transform(t *testing.T) {
 
 	require.NoError(t, err, "transform should not fail")
 
-	var anthropicResponse map[string]interface{}
+	var anthropicResponse map[string]any
 	err = json.Unmarshal(result, &anthropicResponse)
 	require.NoError(t, err, "should be able to parse result")
 
@@ -123,17 +123,17 @@ func TestOpenRouterProvider_Transform(t *testing.T) {
 	assert.Equal(t, "assistant", anthropicResponse["role"], "should have assistant role")
 
 	// Check content format
-	content, ok := anthropicResponse["content"].([]interface{})
+	content, ok := anthropicResponse["content"].([]any)
 	require.True(t, ok, "content should be an array")
 	require.NotEmpty(t, content, "content should not be empty")
 
-	firstContent, ok := content[0].(map[string]interface{})
+	firstContent, ok := content[0].(map[string]any)
 	require.True(t, ok, "first content should be a map")
 	assert.Equal(t, "text", firstContent["type"], "content type should be text")
 	assert.Equal(t, "Hello! How can I help you today?", firstContent["text"], "text content should match")
 
 	// Check usage transformation
-	usage, ok := anthropicResponse["usage"].(map[string]interface{})
+	usage, ok := anthropicResponse["usage"].(map[string]any)
 	require.True(t, ok, "usage should be an object")
 	assert.Equal(t, float64(25), usage["input_tokens"], "input_tokens should match")
 	assert.Equal(t, float64(8), usage["output_tokens"], "output_tokens should match")
@@ -194,13 +194,13 @@ func TestOpenRouterProvider_TransformStream(t *testing.T) {
 	state := &StreamState{}
 
 	// Test streaming chunk
-	chunk := map[string]interface{}{
+	chunk := map[string]any{
 		"id":    "chatcmpl-123",
 		"model": "anthropic/claude-3.5-sonnet",
-		"choices": []interface{}{
-			map[string]interface{}{
+		"choices": []any{
+			map[string]any{
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"content": "Hello",
 				},
 			},
@@ -249,19 +249,19 @@ func TestOpenRouterProvider_ToolCallsTransform(t *testing.T) {
 	provider := NewOpenRouterProvider()
 
 	// Test OpenRouter response with tool calls
-	openRouterResponse := map[string]interface{}{
+	openRouterResponse := map[string]any{
 		"id":    "chatcmpl-123",
 		"model": "anthropic/claude-3.5-sonnet",
-		"choices": []interface{}{
-			map[string]interface{}{
+		"choices": []any{
+			map[string]any{
 				"index": 0,
-				"message": map[string]interface{}{
+				"message": map[string]any{
 					"role": "assistant",
-					"tool_calls": []interface{}{
-						map[string]interface{}{
+					"tool_calls": []any{
+						map[string]any{
 							"id":   "call_abc123",
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      "get_weather",
 								"arguments": "{\"location\":\"San Francisco\",\"unit\":\"celsius\"}",
 							},
@@ -271,7 +271,7 @@ func TestOpenRouterProvider_ToolCallsTransform(t *testing.T) {
 				"finish_reason": "tool_calls",
 			},
 		},
-		"usage": map[string]interface{}{
+		"usage": map[string]any{
 			"prompt_tokens":     50,
 			"completion_tokens": 25,
 		},
@@ -282,22 +282,22 @@ func TestOpenRouterProvider_ToolCallsTransform(t *testing.T) {
 
 	require.NoError(t, err, "transform should not fail")
 
-	var anthropicResponse map[string]interface{}
+	var anthropicResponse map[string]any
 	err = json.Unmarshal(result, &anthropicResponse)
 	require.NoError(t, err, "should be able to parse result")
 
 	// Check content contains tool_use
-	content, ok := anthropicResponse["content"].([]interface{})
+	content, ok := anthropicResponse["content"].([]any)
 	require.True(t, ok, "content should be an array")
 	require.NotEmpty(t, content, "content should not be empty")
 
-	toolUse, ok := content[0].(map[string]interface{})
+	toolUse, ok := content[0].(map[string]any)
 	require.True(t, ok, "first content should be a map")
 	assert.Equal(t, "tool_use", toolUse["type"], "content type should be tool_use")
 	assert.Equal(t, "toolu_abc123", toolUse["id"], "tool ID should be converted")
 	assert.Equal(t, "get_weather", toolUse["name"], "tool name should match")
 
-	input, ok := toolUse["input"].(map[string]interface{})
+	input, ok := toolUse["input"].(map[string]any)
 	require.True(t, ok, "input should be a map")
 	assert.Equal(t, "San Francisco", input["location"], "location parameter should match")
 	assert.Equal(t, "celsius", input["unit"], "unit parameter should match")
@@ -316,21 +316,21 @@ func TestOpenRouterProvider_WebSearchAnnotations(t *testing.T) {
 	provider := NewOpenRouterProvider()
 
 	// Test OpenRouter response with web search annotations
-	openRouterResponse := map[string]interface{}{
+	openRouterResponse := map[string]any{
 		"id":    "chatcmpl-123",
 		"model": "anthropic/claude-3.5-sonnet:online",
-		"choices": []interface{}{
-			map[string]interface{}{
+		"choices": []any{
+			map[string]any{
 				"index": 0,
-				"message": map[string]interface{}{
+				"message": map[string]any{
 					"role":    "assistant",
 					"content": "Based on my search, here's what I found about the weather.",
-					"annotations": []interface{}{
-						map[string]interface{}{
+					"annotations": []any{
+						map[string]any{
 							"type":  "web_search",
 							"query": "current weather San Francisco",
-							"results": []interface{}{
-								map[string]interface{}{
+							"results": []any{
+								map[string]any{
 									"title": "Weather in San Francisco",
 									"url":   "https://weather.com/sf",
 								},
@@ -341,10 +341,10 @@ func TestOpenRouterProvider_WebSearchAnnotations(t *testing.T) {
 				"finish_reason": "stop",
 			},
 		},
-		"usage": map[string]interface{}{
+		"usage": map[string]any{
 			"prompt_tokens":     30,
 			"completion_tokens": 15,
-			"server_tool_use": map[string]interface{}{
+			"server_tool_use": map[string]any{
 				"web_search_requests": 1,
 			},
 		},
@@ -355,24 +355,24 @@ func TestOpenRouterProvider_WebSearchAnnotations(t *testing.T) {
 
 	require.NoError(t, err, "transform should not fail")
 
-	var anthropicResponse map[string]interface{}
+	var anthropicResponse map[string]any
 	err = json.Unmarshal(result, &anthropicResponse)
 	require.NoError(t, err, "should be able to parse result")
 
 	// Check annotations are preserved
-	annotations, ok := anthropicResponse["annotations"].([]interface{})
+	annotations, ok := anthropicResponse["annotations"].([]any)
 	require.True(t, ok, "annotations should be preserved")
 	require.NotEmpty(t, annotations, "annotations should not be empty")
 
-	annotation, ok := annotations[0].(map[string]interface{})
+	annotation, ok := annotations[0].(map[string]any)
 	require.True(t, ok, "annotation should be a map")
 	assert.Equal(t, "web_search", annotation["type"], "annotation type should match")
 
 	// Check usage includes server tool use
-	usage, ok := anthropicResponse["usage"].(map[string]interface{})
+	usage, ok := anthropicResponse["usage"].(map[string]any)
 	require.True(t, ok, "usage should exist")
 
-	serverToolUse, ok := usage["server_tool_use"].(map[string]interface{})
+	serverToolUse, ok := usage["server_tool_use"].(map[string]any)
 	require.True(t, ok, "server_tool_use should be preserved")
 	assert.Equal(t, float64(1), serverToolUse["web_search_requests"], "web_search_requests should match")
 }
@@ -382,18 +382,18 @@ func TestOpenRouterProvider_StreamingToolCalls(t *testing.T) {
 	state := &StreamState{}
 
 	// Test first chunk with tool call start
-	chunk1 := map[string]interface{}{
+	chunk1 := map[string]any{
 		"id":    "chatcmpl-123",
 		"model": "anthropic/claude-3.5-sonnet",
-		"choices": []interface{}{
-			map[string]interface{}{
+		"choices": []any{
+			map[string]any{
 				"index": 0,
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{
-						map[string]interface{}{
+				"delta": map[string]any{
+					"tool_calls": []any{
+						map[string]any{
 							"id":   "call_abc123",
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      "ls",
 								"arguments": "",
 							},
@@ -409,18 +409,18 @@ func TestOpenRouterProvider_StreamingToolCalls(t *testing.T) {
 	require.NoError(t, err, "first chunk should not fail")
 
 	// Test second chunk with tool arguments
-	chunk2 := map[string]interface{}{
+	chunk2 := map[string]any{
 		"id":    "chatcmpl-123",
 		"model": "anthropic/claude-3.5-sonnet",
-		"choices": []interface{}{
-			map[string]interface{}{
+		"choices": []any{
+			map[string]any{
 				"index": 0,
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{
-						map[string]interface{}{
+				"delta": map[string]any{
+					"tool_calls": []any{
+						map[string]any{
 							"id":   "call_abc123",
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      "ls",
 								"arguments": "{\"path\":\"/home\"}",
 							},

@@ -17,30 +17,30 @@ import (
 )
 
 func TestRemoveFieldsRecursively(t *testing.T) {
-	testData := map[string]interface{}{
+	testData := map[string]any{
 		"keep": "this",
-		"cache_control": map[string]interface{}{
+		"cache_control": map[string]any{
 			"type": "ephemeral",
 		},
-		"nested": map[string]interface{}{
+		"nested": map[string]any{
 			"keep_nested": "value",
-			"cache_control": map[string]interface{}{
+			"cache_control": map[string]any{
 				"type": "ephemeral",
 			},
-			"deep": map[string]interface{}{
+			"deep": map[string]any{
 				"cache_control": "remove_me",
 				"keep_deep":     "deep_value",
 			},
 		},
-		"array": []interface{}{
-			map[string]interface{}{
+		"array": []any{
+			map[string]any{
 				"cache_control": "remove",
 				"keep_array":    "array_value",
 			},
 		},
 	}
 
-	result, ok := providers.RemoveFieldsRecursively(testData, []string{"cache_control"}).(map[string]interface{})
+	result, ok := providers.RemoveFieldsRecursively(testData, []string{"cache_control"}).(map[string]any)
 	require.True(t, ok, "result should be a map")
 
 	// Check root level
@@ -48,23 +48,23 @@ func TestRemoveFieldsRecursively(t *testing.T) {
 	assert.Equal(t, "this", result["keep"], "other fields should be preserved")
 
 	// Check nested level
-	nested, ok := result["nested"].(map[string]interface{})
+	nested, ok := result["nested"].(map[string]any)
 	require.True(t, ok, "nested should be a map")
 	assert.NotContains(t, nested, "cache_control", "cache_control should be removed from nested object")
 	assert.Equal(t, "value", nested["keep_nested"], "other nested fields should be preserved")
 
 	// Check deep nested level
-	deep, ok := nested["deep"].(map[string]interface{})
+	deep, ok := nested["deep"].(map[string]any)
 	require.True(t, ok, "deep should be a map")
 	assert.NotContains(t, deep, "cache_control", "cache_control should be removed from deep nested object")
 	assert.Equal(t, "deep_value", deep["keep_deep"], "other deep nested fields should be preserved")
 
 	// Check array level
-	array, ok := result["array"].([]interface{})
+	array, ok := result["array"].([]any)
 	require.True(t, ok, "array should be a slice")
 	require.Len(t, array, 1, "array should have 1 item")
 
-	arrayItem, ok := array[0].(map[string]interface{})
+	arrayItem, ok := array[0].(map[string]any)
 	require.True(t, ok, "array item should be a map")
 	assert.NotContains(t, arrayItem, "cache_control", "cache_control should be removed from array items")
 	assert.Equal(t, "array_value", arrayItem["keep_array"], "other array item fields should be preserved")
@@ -143,9 +143,9 @@ func TestSelectModel_DynamicProviderSelection(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create test request body
-			requestBody := map[string]interface{}{
+			requestBody := map[string]any{
 				"model":      tc.inputModel,
-				"messages":   []interface{}{},
+				"messages":   []any{},
 				"max_tokens": 100,
 			}
 
@@ -159,7 +159,7 @@ func TestSelectModel_DynamicProviderSelection(t *testing.T) {
 			assert.Equal(t, tc.expectedModel, selectedModel, tc.description)
 
 			// Verify request body has correct model
-			var parsedResult map[string]interface{}
+			var parsedResult map[string]any
 			err = json.Unmarshal(resultBody, &parsedResult)
 			require.NoError(t, err)
 
@@ -177,8 +177,8 @@ func TestSelectModel_NoModelProvided(t *testing.T) {
 	}
 
 	// Create test request body without model
-	requestBody := map[string]interface{}{
-		"messages":   []interface{}{},
+	requestBody := map[string]any{
+		"messages":   []any{},
 		"max_tokens": 100,
 	}
 
@@ -192,7 +192,7 @@ func TestSelectModel_NoModelProvided(t *testing.T) {
 	assert.Equal(t, "default,claude-3-5-sonnet", selectedModel)
 
 	// Verify request body has correct model
-	var parsedResult map[string]interface{}
+	var parsedResult map[string]any
 	err = json.Unmarshal(resultBody, &parsedResult)
 	require.NoError(t, err)
 

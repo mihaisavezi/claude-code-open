@@ -61,24 +61,24 @@ func TestNvidiaProvider_TransformRequest(t *testing.T) {
 	provider := NewNvidiaProvider()
 
 	// Test Anthropic to OpenAI/Nvidia request transformation
-	anthropicRequest := map[string]interface{}{
+	anthropicRequest := map[string]any{
 		"model":      "claude-3-5-sonnet",
 		"system":     "You are a helpful assistant",
 		"max_tokens": 100,
-		"messages": []interface{}{
-			map[string]interface{}{
+		"messages": []any{
+			map[string]any{
 				"role":    "user",
 				"content": "Hello, world!",
 			},
 		},
-		"tools": []interface{}{
-			map[string]interface{}{
+		"tools": []any{
+			map[string]any{
 				"name":        "get_weather",
 				"description": "Get current weather",
-				"input_schema": map[string]interface{}{
+				"input_schema": map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"location": map[string]interface{}{
+					"properties": map[string]any{
+						"location": map[string]any{
 							"type":        "string",
 							"description": "City name",
 						},
@@ -96,17 +96,17 @@ func TestNvidiaProvider_TransformRequest(t *testing.T) {
 	result, err := provider.TransformRequest(anthropicJSON)
 	require.NoError(t, err)
 
-	var nvidiaReq map[string]interface{}
+	var nvidiaReq map[string]any
 	err = json.Unmarshal(result, &nvidiaReq)
 	require.NoError(t, err)
 
 	// Verify system message was moved to messages array (OpenAI format)
 	assert.NotContains(t, nvidiaReq, "system", "system field should be removed from root")
-	messages, ok := nvidiaReq["messages"].([]interface{})
+	messages, ok := nvidiaReq["messages"].([]any)
 	require.True(t, ok, "messages should be an array")
 	require.Len(t, messages, 2, "should have system + user message")
 
-	systemMsg := messages[0].(map[string]interface{})
+	systemMsg := messages[0].(map[string]any)
 	assert.Equal(t, "system", systemMsg["role"])
 	assert.Equal(t, "You are a helpful assistant", systemMsg["content"])
 
@@ -115,13 +115,13 @@ func TestNvidiaProvider_TransformRequest(t *testing.T) {
 	assert.Equal(t, float64(100), nvidiaReq["max_completion_tokens"], "should have max_completion_tokens")
 
 	// Verify tools transformation to OpenAI format
-	tools, ok := nvidiaReq["tools"].([]interface{})
+	tools, ok := nvidiaReq["tools"].([]any)
 	require.True(t, ok, "tools should be an array")
 	require.Len(t, tools, 1, "should have one tool")
 
-	tool := tools[0].(map[string]interface{})
+	tool := tools[0].(map[string]any)
 	assert.Equal(t, "function", tool["type"])
-	function := tool["function"].(map[string]interface{})
+	function := tool["function"].(map[string]any)
 	assert.Equal(t, "get_weather", function["name"])
 	assert.Contains(t, function, "parameters", "should have parameters not input_schema")
 
@@ -132,22 +132,22 @@ func TestNvidiaProvider_TransformRequest(t *testing.T) {
 func TestNvidiaProvider_Transform(t *testing.T) {
 	provider := NewNvidiaProvider()
 
-	nvidiaResponse := map[string]interface{}{
+	nvidiaResponse := map[string]any{
 		"id":      "chatcmpl-nvidia-123",
 		"object":  "chat.completion",
 		"created": 1677652288,
 		"model":   "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index": 0,
-				"message": map[string]interface{}{
+				"message": map[string]any{
 					"role":    "assistant",
 					"content": "Hello! How can I help you today?",
 				},
 				"finish_reason": "stop",
 			},
 		},
-		"usage": map[string]interface{}{
+		"usage": map[string]any{
 			"prompt_tokens":     9,
 			"completion_tokens": 12,
 			"total_tokens":      21,
@@ -160,7 +160,7 @@ func TestNvidiaProvider_Transform(t *testing.T) {
 	result, err := provider.TransformResponse(nvidiaJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
@@ -171,11 +171,11 @@ func TestNvidiaProvider_Transform(t *testing.T) {
 	assert.Equal(t, "nvidia/llama-3.1-nemotron-70b-instruct", anthropicResp["model"])
 
 	// Check content
-	content, ok := anthropicResp["content"].([]interface{})
+	content, ok := anthropicResp["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, content, 1)
 
-	textBlock := content[0].(map[string]interface{})
+	textBlock := content[0].(map[string]any)
 	assert.Equal(t, "text", textBlock["type"])
 	text, ok := textBlock["text"]
 	require.True(t, ok)
@@ -186,7 +186,7 @@ func TestNvidiaProvider_Transform(t *testing.T) {
 	}
 
 	// Check usage
-	usage, ok := anthropicResp["usage"].(map[string]interface{})
+	usage, ok := anthropicResp["usage"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, float64(9), usage["input_tokens"])
 	assert.Equal(t, float64(12), usage["output_tokens"])
@@ -228,22 +228,22 @@ func TestNvidiaProvider_ConvertStopReason(t *testing.T) {
 func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 	provider := NewNvidiaProvider()
 
-	nvidiaResponse := map[string]interface{}{
+	nvidiaResponse := map[string]any{
 		"id":      "chatcmpl-nvidia-123",
 		"object":  "chat.completion",
 		"created": 1677652288,
 		"model":   "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index": 0,
-				"message": map[string]interface{}{
+				"message": map[string]any{
 					"role":    "assistant",
 					"content": nil,
-					"tool_calls": []map[string]interface{}{
+					"tool_calls": []map[string]any{
 						{
 							"id":   "call_nvidia123",
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      "get_weather",
 								"arguments": "{\"location\":\"San Francisco\",\"unit\":\"celsius\"}",
 							},
@@ -253,7 +253,7 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 				"finish_reason": "tool_calls",
 			},
 		},
-		"usage": map[string]interface{}{
+		"usage": map[string]any{
 			"prompt_tokens":     9,
 			"completion_tokens": 12,
 			"total_tokens":      21,
@@ -266,16 +266,16 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 	result, err := provider.TransformResponse(nvidiaJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
 	// Check content contains tool use
-	content, ok := anthropicResp["content"].([]interface{})
+	content, ok := anthropicResp["content"].([]any)
 	require.True(t, ok)
 	require.Len(t, content, 1)
 
-	toolBlock := content[0].(map[string]interface{})
+	toolBlock := content[0].(map[string]any)
 	assert.Equal(t, "tool_use", toolBlock["type"])
 
 	id, ok := toolBlock["id"]
@@ -295,7 +295,7 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 	}
 
 	// Check tool input
-	input, ok := toolBlock["input"].(map[string]interface{})
+	input, ok := toolBlock["input"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "San Francisco", input["location"])
 	assert.Equal(t, "celsius", input["unit"])
@@ -313,8 +313,8 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 func TestNvidiaProvider_ErrorHandling(t *testing.T) {
 	provider := NewNvidiaProvider()
 
-	errorResponse := map[string]interface{}{
-		"error": map[string]interface{}{
+	errorResponse := map[string]any{
+		"error": map[string]any{
 			"message": "Invalid API key",
 			"type":    "authentication_error",
 			"code":    "invalid_api_key",
@@ -327,13 +327,13 @@ func TestNvidiaProvider_ErrorHandling(t *testing.T) {
 	result, err := provider.TransformResponse(errorJSON)
 	require.NoError(t, err)
 
-	var anthropicResp map[string]interface{}
+	var anthropicResp map[string]any
 	err = json.Unmarshal(result, &anthropicResp)
 	require.NoError(t, err)
 
 	assert.Equal(t, "error", anthropicResp["type"])
 
-	errorInfo, ok := anthropicResp["error"].(map[string]interface{})
+	errorInfo, ok := anthropicResp["error"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "authentication_error", errorInfo["type"])
 	assert.Equal(t, "Invalid API key", errorInfo["message"])
@@ -344,13 +344,13 @@ func TestNvidiaProvider_TransformStream(t *testing.T) {
 	state := &StreamState{}
 
 	// Test message start chunk
-	messageStartChunk := map[string]interface{}{
+	messageStartChunk := map[string]any{
 		"id":    "chatcmpl-nvidia-123",
 		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"role": "assistant",
 				},
 			},
@@ -370,13 +370,13 @@ func TestNvidiaProvider_TransformStream(t *testing.T) {
 	assert.True(t, state.MessageStartSent)
 
 	// Test text content chunk
-	textChunk := map[string]interface{}{
+	textChunk := map[string]any{
 		"id":    "chatcmpl-nvidia-123",
 		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"content": "Hello!",
 				},
 			},
@@ -395,17 +395,17 @@ func TestNvidiaProvider_TransformStream(t *testing.T) {
 	assert.Contains(t, eventStr, "Hello!")
 
 	// Test finish chunk
-	finishChunk := map[string]interface{}{
+	finishChunk := map[string]any{
 		"id":    "chatcmpl-nvidia-123",
 		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index":         0,
-				"delta":         map[string]interface{}{},
+				"delta":         map[string]any{},
 				"finish_reason": "stop",
 			},
 		},
-		"usage": map[string]interface{}{
+		"usage": map[string]any{
 			"completion_tokens": 5,
 		},
 	}
@@ -428,19 +428,19 @@ func TestNvidiaProvider_StreamingToolCalls(t *testing.T) {
 	state := &StreamState{}
 
 	// First chunk with tool call start
-	toolCallStartChunk := map[string]interface{}{
+	toolCallStartChunk := map[string]any{
 		"id":    "chatcmpl-nvidia-123",
 		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index": 0,
-				"delta": map[string]interface{}{
-					"tool_calls": []map[string]interface{}{
+				"delta": map[string]any{
+					"tool_calls": []map[string]any{
 						{
 							"index": 0,
 							"id":    "call_nvidia123",
 							"type":  "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      "ls",
 								"arguments": "",
 							},
@@ -463,17 +463,17 @@ func TestNvidiaProvider_StreamingToolCalls(t *testing.T) {
 	assert.Contains(t, eventStr, "tool_use")
 
 	// Second chunk with arguments
-	toolCallArgsChunk := map[string]interface{}{
+	toolCallArgsChunk := map[string]any{
 		"id":    "chatcmpl-nvidia-123",
 		"model": "nvidia/llama-3.1-nemotron-70b-instruct",
-		"choices": []map[string]interface{}{
+		"choices": []map[string]any{
 			{
 				"index": 0,
-				"delta": map[string]interface{}{
-					"tool_calls": []map[string]interface{}{
+				"delta": map[string]any{
+					"tool_calls": []map[string]any{
 						{
 							"index": 0,
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"arguments": "{\"path\":\"/home\"}",
 							},
 						},
@@ -498,11 +498,11 @@ func TestNvidiaProvider_StreamingToolCalls(t *testing.T) {
 func TestNvidiaProvider_ConvertUsage(t *testing.T) {
 	provider := NewNvidiaProvider()
 
-	usage := map[string]interface{}{
+	usage := map[string]any{
 		"prompt_tokens":     100,
 		"completion_tokens": 50,
 		"total_tokens":      150,
-		"prompt_tokens_details": map[string]interface{}{
+		"prompt_tokens_details": map[string]any{
 			"cached_tokens": 20,
 		},
 		"cache_creation_input_tokens": 10,

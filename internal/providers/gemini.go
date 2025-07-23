@@ -105,12 +105,12 @@ type geminiPart struct {
 
 type geminiFunctionCall struct {
 	Name string                 `json:"name"`
-	Args map[string]interface{} `json:"args,omitempty"`
+	Args map[string]any `json:"args,omitempty"`
 }
 
 type geminiFunctionResponse struct {
 	Name     string      `json:"name"`
-	Response interface{} `json:"response"`
+	Response any `json:"response"`
 }
 
 type geminiPromptFeedback struct {
@@ -293,7 +293,7 @@ func (p *GeminiProvider) mapGeminiErrorType(geminiStatus string) string {
 }
 
 func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state *StreamState) ([]byte, error) {
-	var rawChunk map[string]interface{}
+	var rawChunk map[string]any
 	if err := json.Unmarshal(geminiData, &rawChunk); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal Gemini streaming response: %w", err)
 	}
@@ -310,8 +310,8 @@ func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state
 	}
 
 	// Handle candidates array
-	if candidates, ok := rawChunk["candidates"].([]interface{}); ok && len(candidates) > 0 {
-		if firstCandidate, ok := candidates[0].(map[string]interface{}); ok {
+	if candidates, ok := rawChunk["candidates"].([]any); ok && len(candidates) > 0 {
+		if firstCandidate, ok := candidates[0].(map[string]any); ok {
 			// Send message_start event if not sent yet
 			if !state.MessageStartSent {
 				messageStartEvent := p.createMessageStartEvent(state.MessageID, state.Model, rawChunk)
@@ -320,14 +320,14 @@ func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state
 			}
 
 			// Handle content
-			if content, ok := firstCandidate["content"].(map[string]interface{}); ok {
+			if content, ok := firstCandidate["content"].(map[string]any); ok {
 				// Initialize content blocks map if needed
 				if state.ContentBlocks == nil {
 					state.ContentBlocks = make(map[int]*ContentBlockState)
 				}
 
 				// Handle parts array
-				if parts, ok := content["parts"].([]interface{}); ok {
+				if parts, ok := content["parts"].([]any); ok {
 					contentEvents := p.handleGeminiParts(parts, state)
 					events = append(events, contentEvents...)
 				}
@@ -346,26 +346,26 @@ func (p *GeminiProvider) convertGeminiToAnthropicStream(geminiData []byte, state
 	return events, nil
 }
 
-func (p *GeminiProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]interface{}) map[string]interface{} {
-	usage := map[string]interface{}{
+func (p *GeminiProvider) createMessageStartEvent(messageID, model string, firstChunk map[string]any) map[string]any {
+	usage := map[string]any{
 		"input_tokens":  0,
 		"output_tokens": 1,
 	}
 
-	if usageMetadata, ok := firstChunk["usageMetadata"].(map[string]interface{}); ok {
+	if usageMetadata, ok := firstChunk["usageMetadata"].(map[string]any); ok {
 		if promptTokens, ok := usageMetadata["promptTokenCount"]; ok {
 			usage["input_tokens"] = promptTokens
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"type": "message_start",
-		"message": map[string]interface{}{
+		"message": map[string]any{
 			"id":            messageID,
 			"type":          "message",
 			"role":          "assistant",
 			"model":         model,
-			"content":       []interface{}{},
+			"content":       []any{},
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage":         usage,
@@ -373,7 +373,7 @@ func (p *GeminiProvider) createMessageStartEvent(messageID, model string, firstC
 	}
 }
 
-func (p *GeminiProvider) formatSSEEvent(eventType string, data map[string]interface{}) []byte {
+func (p *GeminiProvider) formatSSEEvent(eventType string, data map[string]any) []byte {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return []byte("event: error\ndata: {\"error\":\"failed to marshal data\"}\n\n")
@@ -383,11 +383,11 @@ func (p *GeminiProvider) formatSSEEvent(eventType string, data map[string]interf
 }
 
 // handleGeminiParts processes Gemini content parts for streaming
-func (p *GeminiProvider) handleGeminiParts(parts []interface{}, state *StreamState) []byte {
+func (p *GeminiProvider) handleGeminiParts(parts []any, state *StreamState) []byte {
 	var events []byte
 
 	for _, part := range parts {
-		if partMap, ok := part.(map[string]interface{}); ok {
+		if partMap, ok := part.(map[string]any); ok {
 			// Handle text content
 			if text, ok := partMap["text"].(string); ok && text != "" {
 				textEvents := p.handleTextContent(text, state)
@@ -395,7 +395,7 @@ func (p *GeminiProvider) handleGeminiParts(parts []interface{}, state *StreamSta
 			}
 
 			// Handle function calls
-			if functionCall, ok := partMap["functionCall"].(map[string]interface{}); ok {
+			if functionCall, ok := partMap["functionCall"].(map[string]any); ok {
 				functionEvents := p.handleFunctionCall(functionCall, state)
 				events = append(events, functionEvents...)
 			}
@@ -426,11 +426,11 @@ func (p *GeminiProvider) handleTextContent(content string, state *StreamState) [
 }
 
 // handleFunctionCall processes function call streaming
-func (p *GeminiProvider) handleFunctionCall(functionCall map[string]interface{}, state *StreamState) []byte {
+func (p *GeminiProvider) handleFunctionCall(functionCall map[string]any, state *StreamState) []byte {
 	var events []byte
 
 	name, _ := functionCall["name"].(string)
-	args, _ := functionCall["args"].(map[string]interface{})
+	args, _ := functionCall["args"].(map[string]any)
 
 	// Create new content block for tool use
 	contentBlockIndex := len(state.ContentBlocks)
@@ -474,10 +474,10 @@ func (p *GeminiProvider) getOrCreateTextBlock(state *StreamState) int {
 
 // createTextBlockStartEvent creates content_block_start event for text
 func (p *GeminiProvider) createTextBlockStartEvent(index int) []byte {
-	contentBlockStartEvent := map[string]interface{}{
+	contentBlockStartEvent := map[string]any{
 		"type":  "content_block_start",
 		"index": index,
-		"content_block": map[string]interface{}{
+		"content_block": map[string]any{
 			"type": "text",
 			"text": "",
 		},
@@ -488,10 +488,10 @@ func (p *GeminiProvider) createTextBlockStartEvent(index int) []byte {
 
 // createTextDeltaEvent creates content_block_delta event for text
 func (p *GeminiProvider) createTextDeltaEvent(index int, text string) []byte {
-	contentDeltaEvent := map[string]interface{}{
+	contentDeltaEvent := map[string]any{
 		"type":  "content_block_delta",
 		"index": index,
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"type": "text_delta",
 			"text": text,
 		},
@@ -502,14 +502,14 @@ func (p *GeminiProvider) createTextDeltaEvent(index int, text string) []byte {
 
 // createToolBlockStartEvent creates content_block_start event for tool use
 func (p *GeminiProvider) createToolBlockStartEvent(index int, block *ContentBlockState) []byte {
-	contentBlockStartEvent := map[string]interface{}{
+	contentBlockStartEvent := map[string]any{
 		"type":  "content_block_start",
 		"index": index,
-		"content_block": map[string]interface{}{
+		"content_block": map[string]any{
 			"type":  "tool_use",
 			"id":    block.ToolCallID,
 			"name":  block.ToolName,
-			"input": map[string]interface{}{},
+			"input": map[string]any{},
 		},
 	}
 
@@ -518,10 +518,10 @@ func (p *GeminiProvider) createToolBlockStartEvent(index int, block *ContentBloc
 
 // createInputDeltaEvent creates input_json_delta SSE event
 func (p *GeminiProvider) createInputDeltaEvent(index int, partialJSON string) []byte {
-	inputDeltaEvent := map[string]interface{}{
+	inputDeltaEvent := map[string]any{
 		"type":  "content_block_delta",
 		"index": index,
-		"delta": map[string]interface{}{
+		"delta": map[string]any{
 			"type":         "input_json_delta",
 			"partial_json": partialJSON,
 		},
@@ -531,9 +531,9 @@ func (p *GeminiProvider) createInputDeltaEvent(index int, partialJSON string) []
 }
 
 // handleFinishReason processes finish reasons and sends appropriate events
-func (p *GeminiProvider) handleFinishReason(reason string, chunk map[string]interface{}, state *StreamState) []byte {
-	return HandleFinishReason(p, reason, chunk, state, func(chunk map[string]interface{}) map[string]interface{} {
-		if usageMetadata, ok := chunk["usageMetadata"].(map[string]interface{}); ok {
+func (p *GeminiProvider) handleFinishReason(reason string, chunk map[string]any, state *StreamState) []byte {
+	return HandleFinishReason(p, reason, chunk, state, func(chunk map[string]any) map[string]any {
+		if usageMetadata, ok := chunk["usageMetadata"].(map[string]any); ok {
 			return p.convertUsage(usageMetadata)
 		}
 
@@ -542,8 +542,8 @@ func (p *GeminiProvider) handleFinishReason(reason string, chunk map[string]inte
 }
 
 // convertUsage handles usage information conversion
-func (p *GeminiProvider) convertUsage(usage map[string]interface{}) map[string]interface{} {
-	anthropicUsage := make(map[string]interface{})
+func (p *GeminiProvider) convertUsage(usage map[string]any) map[string]any {
+	anthropicUsage := make(map[string]any)
 
 	// Map token fields
 	if promptTokens, ok := usage["promptTokenCount"]; ok {
@@ -559,12 +559,12 @@ func (p *GeminiProvider) convertUsage(usage map[string]interface{}) map[string]i
 
 // transformAnthropicToGemini converts Anthropic/Claude format to Gemini format
 func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte, error) {
-	var anthropicReq map[string]interface{}
+	var anthropicReq map[string]any
 	if err := json.Unmarshal(requestBody, &anthropicReq); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
 	}
 
-	geminiReq := make(map[string]interface{})
+	geminiReq := make(map[string]any)
 
 	// Handle system message and convert messages to contents
 	contents, err := p.convertAnthropicMessagesToGeminiContents(anthropicReq)
@@ -575,7 +575,7 @@ func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte,
 	geminiReq["contents"] = contents
 
 	// Convert generation config
-	generationConfig := make(map[string]interface{})
+	generationConfig := make(map[string]any)
 
 	if maxTokens, ok := anthropicReq["max_tokens"].(float64); ok {
 		generationConfig["maxOutputTokens"] = int(maxTokens)
@@ -598,14 +598,14 @@ func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte,
 	}
 
 	// Convert tools
-	if tools, ok := anthropicReq["tools"].([]interface{}); ok && len(tools) > 0 {
+	if tools, ok := anthropicReq["tools"].([]any); ok && len(tools) > 0 {
 		geminiTools := p.convertAnthropicToolsToGemini(tools)
 
 		geminiReq["tools"] = geminiTools
 	}
 
 	// Convert safety settings if needed
-	safetySettings := []map[string]interface{}{
+	safetySettings := []map[string]any{
 		{
 			"category":  "HARM_CATEGORY_HARASSMENT",
 			"threshold": "BLOCK_NONE",
@@ -629,15 +629,15 @@ func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte,
 }
 
 // Helper methods for transformAnthropicToGemini
-func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq map[string]interface{}) ([]interface{}, error) {
-	var contents []interface{}
+func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq map[string]any) ([]any, error) {
+	var contents []any
 
 	// Handle system message first
 	if systemContent, hasSystem := anthropicReq["system"]; hasSystem {
 		if systemStr, ok := systemContent.(string); ok {
-			systemContent := map[string]interface{}{
-				"parts": []interface{}{
-					map[string]interface{}{
+			systemContent := map[string]any{
+				"parts": []any{
+					map[string]any{
 						"text": systemStr,
 					},
 				},
@@ -648,9 +648,9 @@ func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq m
 	}
 
 	// Convert messages
-	if messages, ok := anthropicReq["messages"].([]interface{}); ok {
+	if messages, ok := anthropicReq["messages"].([]any); ok {
 		for _, message := range messages {
-			if msgMap, ok := message.(map[string]interface{}); ok {
+			if msgMap, ok := message.(map[string]any); ok {
 				geminiContent, err := p.convertAnthropicMessageToGemini(msgMap)
 				if err != nil {
 					return nil, err
@@ -666,22 +666,22 @@ func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq m
 	return contents, nil
 }
 
-func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]interface{}) (map[string]interface{}, error) {
+func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]any) (map[string]any, error) {
 	role, _ := message["role"].(string)
 	content := message["content"]
 
-	var parts []interface{}
+	var parts []any
 
 	switch contentType := content.(type) {
 	case string:
 		// Simple text content
-		parts = append(parts, map[string]interface{}{
+		parts = append(parts, map[string]any{
 			"text": contentType,
 		})
-	case []interface{}:
+	case []any:
 		// Array of content blocks
 		for _, block := range contentType {
-			if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockMap, ok := block.(map[string]any); ok {
 				part := p.convertContentBlockToGeminiPart(blockMap)
 
 				if part != nil {
@@ -699,26 +699,26 @@ func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]inte
 		geminiRole = "model"
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"parts": parts,
 		"role":  geminiRole,
 	}, nil
 }
 
-func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interface{}) map[string]interface{} {
+func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]any) map[string]any {
 	blockType, _ := block["type"].(string)
 
 	switch blockType {
 	case "text":
 		if text, ok := block["text"].(string); ok {
-			return map[string]interface{}{
+			return map[string]any{
 				"text": text,
 			}
 		}
 	case "tool_use":
 		// Convert tool_use to function_call for Gemini
 		if name, ok := block["name"].(string); ok {
-			functionCall := map[string]interface{}{
+			functionCall := map[string]any{
 				"name": name,
 			}
 
@@ -726,7 +726,7 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 				functionCall["args"] = input
 			}
 
-			return map[string]interface{}{
+			return map[string]any{
 				"functionCall": functionCall,
 			}
 		}
@@ -734,23 +734,23 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 		// Convert tool_result to function_response for Gemini
 		if toolUseID, ok := block["tool_use_id"].(string); ok {
 			// Extract content and ensure it's a structured object for protobuf compatibility
-			var response interface{}
+			var response any
 
 			if content := block["content"]; content != nil {
 				if contentStr, ok := content.(string); ok {
 					// Wrap string content in structured object format for protobuf compatibility
-					response = map[string]interface{}{
+					response = map[string]any{
 						"content": contentStr,
 					}
 				} else {
 					response = content
 				}
 			} else {
-				response = map[string]interface{}{}
+				response = map[string]any{}
 			}
 
-			return map[string]interface{}{
-				"functionResponse": map[string]interface{}{
+			return map[string]any{
+				"functionResponse": map[string]any{
 					"name":     toolUseID, // Use tool_use_id as function name reference
 					"response": response,  // Structured object instead of plain string
 				},
@@ -761,14 +761,14 @@ func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interf
 	return nil
 }
 
-func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []interface{}) []interface{} {
-	var geminiTools []interface{}
+func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []any) []any {
+	var geminiTools []any
 
-	functionDeclarations := make([]interface{}, 0)
+	functionDeclarations := make([]any, 0)
 
 	for _, tool := range tools {
-		if toolMap, ok := tool.(map[string]interface{}); ok {
-			functionDecl := map[string]interface{}{
+		if toolMap, ok := tool.(map[string]any); ok {
+			functionDecl := map[string]any{
 				"name": toolMap["name"],
 			}
 
@@ -785,7 +785,7 @@ func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []interface{}) []in
 	}
 
 	if len(functionDeclarations) > 0 {
-		geminiTool := map[string]interface{}{
+		geminiTool := map[string]any{
 			"functionDeclarations": functionDeclarations,
 		}
 		geminiTools = append(geminiTools, geminiTool)

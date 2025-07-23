@@ -23,7 +23,7 @@ type StreamState struct {
 	MessageStartSent bool
 	MessageID        string
 	Model            string
-	InitialUsage     map[string]interface{}
+	InitialUsage     map[string]any
 
 	// Content block tracking for multiple blocks (text, tool_use, etc.)
 	ContentBlocks map[int]*ContentBlockState
