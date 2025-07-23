@@ -301,32 +301,6 @@ type Provider interface {
 }
 ```
 
-### 🔄 Request Flow
-
-<div align="center">
-
-```mermaid
-graph TD
-    A[📱 Client Request] --> B[🔐 Authentication]
-    B --> C[🎯 Model Selection]
-    C --> D[🔌 Provider Selection]
-    D --> E[🔄 Transform Request]
-    E --> F[🌐 Proxy to Provider]
-    F --> G[🔄 Transform Response]
-    G --> H[📡 Stream to Client]
-```
-
-</div>
-
-1. **📱 Client Request** - Client sends request to router
-2. **🔐 Authentication** - Router authenticates request (if API key configured)
-3. **🎯 Model Selection** - Router selects appropriate model based on routing
-4. **🔌 Provider Selection** - Router identifies provider based on configuration
-5. **🔄 Transform Request** - Provider transforms Claude format to provider format
-6. **🌐 Proxy to Provider** - Router proxies request to upstream provider
-7. **🔄 Transform Response** - Provider transforms response back to Claude format
-8. **📡 Stream to Client** - Router streams response to client
-
 ## ⚙️ Configuration
 
 ### 📁 Configuration File Location
