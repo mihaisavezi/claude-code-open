@@ -57,6 +57,78 @@ func TestNvidiaProvider_IsStreaming(t *testing.T) {
 	}
 }
 
+func TestNvidiaProvider_TransformRequest(t *testing.T) {
+	provider := NewNvidiaProvider()
+
+	// Test Anthropic to OpenAI/Nvidia request transformation
+	anthropicRequest := map[string]interface{}{
+		"model":      "claude-3-5-sonnet",
+		"system":     "You are a helpful assistant",
+		"max_tokens": 100,
+		"messages": []interface{}{
+			map[string]interface{}{
+				"role":    "user",
+				"content": "Hello, world!",
+			},
+		},
+		"tools": []interface{}{
+			map[string]interface{}{
+				"name":        "get_weather",
+				"description": "Get current weather",
+				"input_schema": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"location": map[string]interface{}{
+							"type":        "string",
+							"description": "City name",
+						},
+					},
+					"required": []string{"location"},
+				},
+			},
+		},
+		"tool_choice": "auto",
+	}
+
+	anthropicJSON, err := json.Marshal(anthropicRequest)
+	require.NoError(t, err)
+
+	result, err := provider.TransformRequest(anthropicJSON)
+	require.NoError(t, err)
+
+	var nvidiaReq map[string]interface{}
+	err = json.Unmarshal(result, &nvidiaReq)
+	require.NoError(t, err)
+
+	// Verify system message was moved to messages array (OpenAI format)
+	assert.NotContains(t, nvidiaReq, "system", "system field should be removed from root")
+	messages, ok := nvidiaReq["messages"].([]interface{})
+	require.True(t, ok, "messages should be an array")
+	require.Len(t, messages, 2, "should have system + user message")
+
+	systemMsg := messages[0].(map[string]interface{})
+	assert.Equal(t, "system", systemMsg["role"])
+	assert.Equal(t, "You are a helpful assistant", systemMsg["content"])
+
+	// Verify max_tokens -> max_completion_tokens transformation
+	assert.NotContains(t, nvidiaReq, "max_tokens", "max_tokens should be converted")
+	assert.Equal(t, float64(100), nvidiaReq["max_completion_tokens"], "should have max_completion_tokens")
+
+	// Verify tools transformation to OpenAI format
+	tools, ok := nvidiaReq["tools"].([]interface{})
+	require.True(t, ok, "tools should be an array")
+	require.Len(t, tools, 1, "should have one tool")
+
+	tool := tools[0].(map[string]interface{})
+	assert.Equal(t, "function", tool["type"])
+	function := tool["function"].(map[string]interface{})
+	assert.Equal(t, "get_weather", function["name"])
+	assert.Contains(t, function, "parameters", "should have parameters not input_schema")
+
+	// Verify tool_choice is preserved
+	assert.Equal(t, "auto", nvidiaReq["tool_choice"])
+}
+
 func TestNvidiaProvider_Transform(t *testing.T) {
 	provider := NewNvidiaProvider()
 
@@ -85,7 +157,7 @@ func TestNvidiaProvider_Transform(t *testing.T) {
 	nvidiaJSON, err := json.Marshal(nvidiaResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(nvidiaJSON)
+	result, err := provider.TransformResponse(nvidiaJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -191,7 +263,7 @@ func TestNvidiaProvider_ToolCallsTransform(t *testing.T) {
 	nvidiaJSON, err := json.Marshal(nvidiaResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(nvidiaJSON)
+	result, err := provider.TransformResponse(nvidiaJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -252,7 +324,7 @@ func TestNvidiaProvider_ErrorHandling(t *testing.T) {
 	errorJSON, err := json.Marshal(errorResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(errorJSON)
+	result, err := provider.TransformResponse(errorJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}

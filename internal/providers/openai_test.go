@@ -57,6 +57,82 @@ func TestOpenAIProvider_IsStreaming(t *testing.T) {
 	}
 }
 
+func TestOpenAIProvider_TransformRequest(t *testing.T) {
+	provider := NewOpenAIProvider()
+
+	// Test Anthropic to OpenAI request transformation
+	anthropicRequest := map[string]interface{}{
+		"model":      "claude-3-5-sonnet",
+		"system":     "You are a helpful assistant",
+		"max_tokens": 100,
+		"messages": []interface{}{
+			map[string]interface{}{
+				"role":    "user",
+				"content": "Hello, world!",
+			},
+		},
+		"tools": []interface{}{
+			map[string]interface{}{
+				"name":        "get_weather",
+				"description": "Get current weather",
+				"input_schema": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"location": map[string]interface{}{
+							"type":        "string",
+							"description": "City name",
+						},
+					},
+					"required": []string{"location"},
+				},
+			},
+		},
+		"tool_choice": "auto",
+	}
+
+	anthropicJSON, err := json.Marshal(anthropicRequest)
+	require.NoError(t, err)
+
+	result, err := provider.TransformRequest(anthropicJSON)
+	require.NoError(t, err)
+
+	var openaiReq map[string]interface{}
+	err = json.Unmarshal(result, &openaiReq)
+	require.NoError(t, err)
+
+	// Verify system message was moved to messages array
+	assert.NotContains(t, openaiReq, "system", "system field should be removed from root")
+	messages, ok := openaiReq["messages"].([]interface{})
+	require.True(t, ok, "messages should be an array")
+	require.Len(t, messages, 2, "should have system + user message")
+
+	systemMsg := messages[0].(map[string]interface{})
+	assert.Equal(t, "system", systemMsg["role"])
+	assert.Equal(t, "You are a helpful assistant", systemMsg["content"])
+
+	userMsg := messages[1].(map[string]interface{})
+	assert.Equal(t, "user", userMsg["role"])
+
+	// Verify max_tokens -> max_completion_tokens transformation
+	assert.NotContains(t, openaiReq, "max_tokens", "max_tokens should be converted")
+	assert.Equal(t, float64(100), openaiReq["max_completion_tokens"], "should have max_completion_tokens")
+
+	// Verify tools transformation to OpenAI format
+	tools, ok := openaiReq["tools"].([]interface{})
+	require.True(t, ok, "tools should be an array")
+	require.Len(t, tools, 1, "should have one tool")
+
+	tool := tools[0].(map[string]interface{})
+	assert.Equal(t, "function", tool["type"])
+	function := tool["function"].(map[string]interface{})
+	assert.Equal(t, "get_weather", function["name"])
+	assert.Equal(t, "Get current weather", function["description"])
+	assert.Contains(t, function, "parameters", "should have parameters not input_schema")
+
+	// Verify tool_choice is preserved
+	assert.Equal(t, "auto", openaiReq["tool_choice"])
+}
+
 func TestOpenAIProvider_Transform(t *testing.T) {
 	provider := NewOpenAIProvider()
 
@@ -85,7 +161,7 @@ func TestOpenAIProvider_Transform(t *testing.T) {
 	openaiJSON, err := json.Marshal(openaiResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(openaiJSON)
+	result, err := provider.TransformResponse(openaiJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -191,7 +267,7 @@ func TestOpenAIProvider_ToolCallsTransform(t *testing.T) {
 	openaiJSON, err := json.Marshal(openaiResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(openaiJSON)
+	result, err := provider.TransformResponse(openaiJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -252,7 +328,7 @@ func TestOpenAIProvider_ErrorHandling(t *testing.T) {
 	errorJSON, err := json.Marshal(errorResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(errorJSON)
+	result, err := provider.TransformResponse(errorJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}

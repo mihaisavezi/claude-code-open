@@ -57,6 +57,71 @@ func TestGeminiProvider_IsStreaming(t *testing.T) {
 	}
 }
 
+func TestGeminiProvider_TransformRequest(t *testing.T) {
+	provider := NewGeminiProvider()
+
+	// Test Anthropic to Gemini request transformation
+	anthropicRequest := map[string]interface{}{
+		"model":      "claude-3-5-sonnet",
+		"system":     "You are a helpful assistant",
+		"max_tokens": 100,
+		"messages": []interface{}{
+			map[string]interface{}{
+				"role":    "user",
+				"content": "Hello, world!",
+			},
+		},
+		"tools": []interface{}{
+			map[string]interface{}{
+				"name":        "get_weather",
+				"description": "Get current weather",
+				"input_schema": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"location": map[string]interface{}{
+							"type":        "string",
+							"description": "City name",
+						},
+					},
+					"required": []string{"location"},
+				},
+			},
+		},
+	}
+
+	anthropicJSON, err := json.Marshal(anthropicRequest)
+	require.NoError(t, err)
+
+	result, err := provider.TransformRequest(anthropicJSON)
+	require.NoError(t, err)
+
+	var geminiReq map[string]interface{}
+	err = json.Unmarshal(result, &geminiReq)
+	require.NoError(t, err)
+
+	// Verify system instructions conversion
+	if systemInstructions, ok := geminiReq["systemInstruction"]; ok {
+		systemInstr := systemInstructions.(map[string]interface{})
+		parts := systemInstr["parts"].([]interface{})
+		firstPart := parts[0].(map[string]interface{})
+		assert.Equal(t, "You are a helpful assistant", firstPart["text"])
+	}
+
+	// Verify model field is not included (Gemini uses URL-based model selection)
+	assert.NotContains(t, geminiReq, "model", "model should not be in request body for Gemini")
+
+	// Verify contents array structure (Gemini format)
+	contents, ok := geminiReq["contents"].([]interface{})
+	require.True(t, ok, "contents should be an array")
+	require.GreaterOrEqual(t, len(contents), 1, "should have at least one content")
+
+	// Verify generation config
+	genConfig, ok := geminiReq["generationConfig"].(map[string]interface{})
+	if ok {
+		assert.Equal(t, float64(100), genConfig["maxOutputTokens"], "should set maxOutputTokens")
+	}
+}
+
 func TestGeminiProvider_Transform(t *testing.T) {
 	provider := NewGeminiProvider()
 
@@ -87,7 +152,7 @@ func TestGeminiProvider_Transform(t *testing.T) {
 	geminiJSON, err := json.Marshal(geminiResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(geminiJSON)
+	result, err := provider.TransformResponse(geminiJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -196,7 +261,7 @@ func TestGeminiProvider_FunctionCallsTransform(t *testing.T) {
 	geminiJSON, err := json.Marshal(geminiResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(geminiJSON)
+	result, err := provider.TransformResponse(geminiJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -257,7 +322,7 @@ func TestGeminiProvider_ErrorHandling(t *testing.T) {
 	errorJSON, err := json.Marshal(errorResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(errorJSON)
+	result, err := provider.TransformResponse(errorJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}
@@ -441,7 +506,7 @@ func TestGeminiProvider_EmptyContent(t *testing.T) {
 	geminiJSON, err := json.Marshal(geminiResponse)
 	require.NoError(t, err)
 
-	result, err := provider.Transform(geminiJSON)
+	result, err := provider.TransformResponse(geminiJSON)
 	require.NoError(t, err)
 
 	var anthropicResp map[string]interface{}

@@ -56,7 +56,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Transform from Anthropic format to provider format
-	finalBody, err := h.transformRequestToProviderFormat(transformedBody, provider.Name())
+	finalBody, err := provider.TransformRequest(transformedBody)
 	if err != nil {
 		h.logger.Warn("Request transformation failed, using original", "error", err)
 		finalBody = transformedBody
@@ -233,7 +233,7 @@ func (h *ProxyHandler) handleResponse(w http.ResponseWriter, resp *http.Response
 		finalBody = respBody
 	} else {
 		// Transform successful responses
-		transformedBody, err := provider.Transform(respBody)
+		transformedBody, err := provider.TransformResponse(respBody)
 		if err != nil {
 			h.logger.Warn("Response transformation failed, using original", "error", err)
 			finalBody = respBody
@@ -417,18 +417,6 @@ func (h *ProxyHandler) httpError(w http.ResponseWriter, code int, format string,
 	http.Error(w, msg, code)
 }
 
-func (h *ProxyHandler) transformRequestToProviderFormat(requestBody []byte, providerName string) ([]byte, error) {
-	switch providerName {
-	case "openrouter", "openai", "nvidia":
-		return h.transformAnthropicToOpenAI(requestBody)
-	case "gemini":
-		return h.transformAnthropicToGemini(requestBody)
-	case "anthropic":
-		return h.transformOpenAIToAnthropic(requestBody)
-	default:
-		return requestBody, nil // Default: no transformation
-	}
-}
 
 func (h *ProxyHandler) transformAnthropicToOpenAI(anthropicRequest []byte) ([]byte, error) {
 	var request map[string]interface{}

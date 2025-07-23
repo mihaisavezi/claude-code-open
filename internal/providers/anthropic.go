@@ -43,9 +43,14 @@ func (p *AnthropicProvider) IsStreaming(headers map[string][]string) bool {
 	return false
 }
 
-func (p *AnthropicProvider) Transform(request []byte) ([]byte, error) {
-	// Anthropic format doesn't need transformation
+func (p *AnthropicProvider) TransformRequest(request []byte) ([]byte, error) {
+	// Anthropic format doesn't need request transformation
 	return request, nil
+}
+
+func (p *AnthropicProvider) TransformResponse(response []byte) ([]byte, error) {
+	// Anthropic format doesn't need response transformation
+	return response, nil
 }
 
 func (p *AnthropicProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {

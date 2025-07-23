@@ -57,8 +57,14 @@ func (p *NvidiaProvider) IsStreaming(headers map[string][]string) bool {
 	return false
 }
 
-func (p *NvidiaProvider) Transform(request []byte) ([]byte, error) {
-	return p.convertNvidiaToAnthropic(request)
+func (p *NvidiaProvider) TransformRequest(request []byte) ([]byte, error) {
+	// Nvidia uses OpenAI format, so we need to transform Anthropic to OpenAI
+	return p.transformAnthropicToOpenAI(request)
+}
+
+func (p *NvidiaProvider) TransformResponse(response []byte) ([]byte, error) {
+	// Transform Nvidia response to Anthropic format
+	return p.convertNvidiaToAnthropic(response)
 }
 
 func (p *NvidiaProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
@@ -707,4 +713,268 @@ func (p *NvidiaProvider) convertUsage(usage map[string]interface{}) map[string]i
 	}
 
 	return anthropicUsage
+}
+
+// transformAnthropicToOpenAI converts Anthropic/Claude format to OpenAI format for Nvidia
+func (p *NvidiaProvider) transformAnthropicToOpenAI(anthropicRequest []byte) ([]byte, error) {
+	var request map[string]interface{}
+	if err := json.Unmarshal(anthropicRequest, &request); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
+	}
+
+	// Remove Anthropic-specific fields that OpenAI doesn't support
+	cleanedRequest := p.removeAnthropicSpecificFields(request)
+
+	// Handle system parameter - convert it to a system message in messages array
+	if systemContent, hasSystem := cleanedRequest["system"]; hasSystem {
+		if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
+			// Create system message
+			systemMessage := map[string]interface{}{
+				"role":    "system",
+				"content": systemContent,
+			}
+			
+			// Prepend system message to messages array
+			newMessages := append([]interface{}{systemMessage}, messages...)
+			cleanedRequest["messages"] = newMessages
+		}
+		// Remove the system parameter as OpenAI doesn't support it at root level
+		delete(cleanedRequest, "system")
+	}
+
+	// Handle max_tokens parameter - convert to max_completion_tokens for OpenAI compatibility
+	if maxTokens, hasMaxTokens := cleanedRequest["max_tokens"]; hasMaxTokens {
+		cleanedRequest["max_completion_tokens"] = maxTokens
+		delete(cleanedRequest, "max_tokens")
+	}
+
+	// Transform any Anthropic-specific message formats if needed
+	if messages, ok := cleanedRequest["messages"].([]interface{}); ok {
+		cleanedRequest["messages"] = p.transformMessages(messages)
+	}
+
+	// Transform tools from Claude format to OpenAI format if present
+	if tools, ok := cleanedRequest["tools"].([]interface{}); ok {
+		transformedTools, err := p.transformTools(tools)
+		if err != nil {
+			// If tools transformation fails, remove tool_choice to prevent validation errors
+			if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
+				delete(cleanedRequest, "tool_choice")
+			}
+		} else {
+			cleanedRequest["tools"] = transformedTools
+
+			// Re-validate tool_choice after successful transformation
+			// If transformed tools array is empty, remove tool_choice
+			if len(transformedTools) == 0 {
+				if _, hasToolChoice := cleanedRequest["tool_choice"]; hasToolChoice {
+					delete(cleanedRequest, "tool_choice")
+				}
+			}
+		}
+	}
+
+	return json.Marshal(cleanedRequest)
+}
+
+// Helper methods for transformAnthropicToOpenAI (reused from OpenAI provider logic)
+func (p *NvidiaProvider) removeAnthropicSpecificFields(request map[string]interface{}) map[string]interface{} {
+	fieldsToRemove := []string{"cache_control"}
+	
+	if store, hasStore := request["store"]; !hasStore || store != true {
+		fieldsToRemove = append(fieldsToRemove, "metadata")
+	}
+	
+	cleaned := p.removeFieldsRecursively(request, fieldsToRemove).(map[string]interface{})
+
+	if tools, hasTools := cleaned["tools"]; !hasTools || tools == nil {
+		delete(cleaned, "tool_choice")
+	} else if toolsArray, ok := tools.([]interface{}); ok && len(toolsArray) == 0 {
+		delete(cleaned, "tool_choice")
+	}
+
+	return cleaned
+}
+
+func (p *NvidiaProvider) removeFieldsRecursively(data interface{}, fieldsToRemove []string) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for key, value := range v {
+			shouldRemove := false
+			for _, field := range fieldsToRemove {
+				if key == field {
+					shouldRemove = true
+					break
+				}
+			}
+			if !shouldRemove {
+				result[key] = p.removeFieldsRecursively(value, fieldsToRemove)
+			}
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, item := range v {
+			result[i] = p.removeFieldsRecursively(item, fieldsToRemove)
+		}
+		return result
+	default:
+		return v
+	}
+}
+
+func (p *NvidiaProvider) transformTools(tools []interface{}) ([]interface{}, error) {
+	transformedTools := make([]interface{}, 0, len(tools))
+
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if toolType, hasType := toolMap["type"].(string); hasType && toolType == "function" {
+			if _, hasFunction := toolMap["function"]; hasFunction {
+				transformedTools = append(transformedTools, tool)
+				continue
+			}
+		}
+
+		if name, hasName := toolMap["name"].(string); hasName {
+			openAITool := map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name": name,
+				},
+			}
+
+			function := openAITool["function"].(map[string]interface{})
+
+			if description, hasDesc := toolMap["description"].(string); hasDesc {
+				function["description"] = description
+			}
+
+			if inputSchema, hasInputSchema := toolMap["input_schema"]; hasInputSchema {
+				function["parameters"] = inputSchema
+			}
+			transformedTools = append(transformedTools, openAITool)
+		}
+	}
+
+	return transformedTools, nil
+}
+
+func (p *NvidiaProvider) transformMessages(messages []interface{}) []interface{} {
+	transformedMessages := make([]interface{}, 0, len(messages))
+
+	for _, message := range messages {
+		if msgMap, ok := message.(map[string]interface{}); ok {
+			if role, ok := msgMap["role"].(string); ok {
+				if role == "user" {
+					if content, ok := msgMap["content"].([]interface{}); ok {
+						toolResultMessages := p.extractToolResults(content)
+						if len(toolResultMessages) > 0 {
+							transformedMessages = append(transformedMessages, toolResultMessages...)
+							continue
+						}
+					}
+				} else if role == "assistant" {
+					if content, ok := msgMap["content"].([]interface{}); ok {
+						transformedMsg := p.transformAssistantMessage(msgMap, content)
+						transformedMessages = append(transformedMessages, transformedMsg)
+						continue
+					}
+				}
+			}
+		}
+		
+		transformedMessages = append(transformedMessages, message)
+	}
+
+	return transformedMessages
+}
+
+func (p *NvidiaProvider) extractToolResults(content []interface{}) []interface{} {
+	var toolMessages []interface{}
+
+	for _, block := range content {
+		if blockMap, ok := block.(map[string]interface{}); ok {
+			if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_result" {
+				if toolUseId, ok := blockMap["tool_use_id"].(string); ok {
+					toolCallId := strings.Replace(toolUseId, "toolu_", "call_", 1)
+					
+					toolMessage := map[string]interface{}{
+						"role":         "tool",
+						"tool_call_id": toolCallId,
+						"content":      blockMap["content"],
+					}
+					toolMessages = append(toolMessages, toolMessage)
+				}
+			}
+		}
+	}
+
+	if len(toolMessages) > 0 {
+		return toolMessages
+	}
+
+	return nil
+}
+
+func (p *NvidiaProvider) transformAssistantMessage(msgMap map[string]interface{}, content []interface{}) map[string]interface{} {
+	transformedMsg := make(map[string]interface{})
+	for k, v := range msgMap {
+		transformedMsg[k] = v
+	}
+
+	var textContent strings.Builder
+	var toolCalls []interface{}
+
+	for _, block := range content {
+		if blockMap, ok := block.(map[string]interface{}); ok {
+			blockType, _ := blockMap["type"].(string)
+			
+			switch blockType {
+			case "text":
+				if text, ok := blockMap["text"].(string); ok {
+					textContent.WriteString(text)
+				}
+			case "tool_use":
+				if id, ok := blockMap["id"].(string); ok {
+					if name, ok := blockMap["name"].(string); ok {
+						toolCallId := strings.Replace(id, "toolu_", "call_", 1)
+						
+						var arguments string
+						if input := blockMap["input"]; input != nil {
+							if inputBytes, err := json.Marshal(input); err == nil {
+								arguments = string(inputBytes)
+							}
+						}
+
+						toolCall := map[string]interface{}{
+							"id":   toolCallId,
+							"type": "function",
+							"function": map[string]interface{}{
+								"name":      name,
+								"arguments": arguments,
+							},
+						}
+						toolCalls = append(toolCalls, toolCall)
+					}
+				}
+			}
+		}
+	}
+
+	if textContent.Len() > 0 {
+		transformedMsg["content"] = textContent.String()
+	} else {
+		transformedMsg["content"] = ""
+	}
+
+	if len(toolCalls) > 0 {
+		transformedMsg["tool_calls"] = toolCalls
+	}
+
+	return transformedMsg
 }

@@ -57,8 +57,14 @@ func (p *GeminiProvider) IsStreaming(headers map[string][]string) bool {
 	return false
 }
 
-func (p *GeminiProvider) Transform(request []byte) ([]byte, error) {
-	return p.convertGeminiToAnthropic(request)
+func (p *GeminiProvider) TransformRequest(request []byte) ([]byte, error) {
+	// Gemini uses its own format, so we need to transform Anthropic to Gemini
+	return p.transformAnthropicToGemini(request)
+}
+
+func (p *GeminiProvider) TransformResponse(response []byte) ([]byte, error) {
+	// Transform Gemini response to Anthropic format
+	return p.convertGeminiToAnthropic(response)
 }
 
 func (p *GeminiProvider) TransformStream(chunk []byte, state *StreamState) ([]byte, error) {
@@ -568,4 +574,242 @@ func (p *GeminiProvider) convertUsage(usage map[string]interface{}) map[string]i
 	}
 
 	return anthropicUsage
+}
+
+// transformAnthropicToGemini converts Anthropic/Claude format to Gemini format
+func (p *GeminiProvider) transformAnthropicToGemini(requestBody []byte) ([]byte, error) {
+	var anthropicReq map[string]interface{}
+	if err := json.Unmarshal(requestBody, &anthropicReq); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal Anthropic request: %w", err)
+	}
+
+	geminiReq := make(map[string]interface{})
+
+	// Handle system message and convert messages to contents
+	contents, err := p.convertAnthropicMessagesToGeminiContents(anthropicReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert messages: %w", err)
+	}
+	geminiReq["contents"] = contents
+
+	// Convert generation config
+	generationConfig := make(map[string]interface{})
+	
+	if maxTokens, ok := anthropicReq["max_tokens"].(float64); ok {
+		generationConfig["maxOutputTokens"] = int(maxTokens)
+	}
+	
+	if temperature, ok := anthropicReq["temperature"].(float64); ok {
+		generationConfig["temperature"] = temperature
+	}
+	
+	if topP, ok := anthropicReq["top_p"].(float64); ok {
+		generationConfig["topP"] = topP
+	}
+	
+	if topK, ok := anthropicReq["top_k"].(float64); ok {
+		generationConfig["topK"] = int(topK)
+	}
+
+	if len(generationConfig) > 0 {
+		geminiReq["generationConfig"] = generationConfig
+	}
+
+	// Convert tools
+	if tools, ok := anthropicReq["tools"].([]interface{}); ok && len(tools) > 0 {
+		geminiTools, err := p.convertAnthropicToolsToGemini(tools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert tools: %w", err)
+		}
+		geminiReq["tools"] = geminiTools
+	}
+
+	// Convert safety settings if needed
+	safetySettings := []map[string]interface{}{
+		{
+			"category":  "HARM_CATEGORY_HARASSMENT",
+			"threshold": "BLOCK_NONE",
+		},
+		{
+			"category":  "HARM_CATEGORY_HATE_SPEECH",
+			"threshold": "BLOCK_NONE",
+		},
+		{
+			"category":  "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+			"threshold": "BLOCK_NONE",
+		},
+		{
+			"category":  "HARM_CATEGORY_DANGEROUS_CONTENT",
+			"threshold": "BLOCK_NONE",
+		},
+	}
+	geminiReq["safetySettings"] = safetySettings
+
+	return json.Marshal(geminiReq)
+}
+
+// Helper methods for transformAnthropicToGemini
+func (p *GeminiProvider) convertAnthropicMessagesToGeminiContents(anthropicReq map[string]interface{}) ([]interface{}, error) {
+	var contents []interface{}
+
+	// Handle system message first
+	if systemContent, hasSystem := anthropicReq["system"]; hasSystem {
+		if systemStr, ok := systemContent.(string); ok {
+			systemContent := map[string]interface{}{
+				"parts": []interface{}{
+					map[string]interface{}{
+						"text": systemStr,
+					},
+				},
+				"role": "user",
+			}
+			contents = append(contents, systemContent)
+		}
+	}
+
+	// Convert messages
+	if messages, ok := anthropicReq["messages"].([]interface{}); ok {
+		for _, message := range messages {
+			if msgMap, ok := message.(map[string]interface{}); ok {
+				geminiContent, err := p.convertAnthropicMessageToGemini(msgMap)
+				if err != nil {
+					return nil, err
+				}
+				if geminiContent != nil {
+					contents = append(contents, geminiContent)
+				}
+			}
+		}
+	}
+
+	return contents, nil
+}
+
+func (p *GeminiProvider) convertAnthropicMessageToGemini(message map[string]interface{}) (map[string]interface{}, error) {
+	role, _ := message["role"].(string)
+	content := message["content"]
+
+	var parts []interface{}
+
+	switch contentType := content.(type) {
+	case string:
+		// Simple text content
+		parts = append(parts, map[string]interface{}{
+			"text": contentType,
+		})
+	case []interface{}:
+		// Array of content blocks
+		for _, block := range contentType {
+			if blockMap, ok := block.(map[string]interface{}); ok {
+				part, err := p.convertContentBlockToGeminiPart(blockMap)
+				if err != nil {
+					return nil, err
+				}
+				if part != nil {
+					parts = append(parts, part)
+				}
+			}
+		}
+	default:
+		return nil, fmt.Errorf("unsupported content type: %T", content)
+	}
+
+	// Convert role
+	geminiRole := "user"
+	if role == "assistant" {
+		geminiRole = "model"
+	}
+
+	return map[string]interface{}{
+		"parts": parts,
+		"role":  geminiRole,
+	}, nil
+}
+
+func (p *GeminiProvider) convertContentBlockToGeminiPart(block map[string]interface{}) (map[string]interface{}, error) {
+	blockType, _ := block["type"].(string)
+
+	switch blockType {
+	case "text":
+		if text, ok := block["text"].(string); ok {
+			return map[string]interface{}{
+				"text": text,
+			}, nil
+		}
+	case "tool_use":
+		// Convert tool_use to function_call for Gemini
+		if name, ok := block["name"].(string); ok {
+			functionCall := map[string]interface{}{
+				"name": name,
+			}
+
+			if input := block["input"]; input != nil {
+				functionCall["args"] = input
+			}
+
+			return map[string]interface{}{
+				"functionCall": functionCall,
+			}, nil
+		}
+	case "tool_result":
+		// Convert tool_result to function_response for Gemini
+		if toolUseId, ok := block["tool_use_id"].(string); ok {
+			// Extract content and ensure it's a structured object for protobuf compatibility
+			var response interface{}
+			if content := block["content"]; content != nil {
+				if contentStr, ok := content.(string); ok {
+					// Wrap string content in structured object format for protobuf compatibility
+					response = map[string]interface{}{
+						"content": contentStr,
+					}
+				} else {
+					response = content
+				}
+			} else {
+				response = map[string]interface{}{}
+			}
+
+			return map[string]interface{}{
+				"functionResponse": map[string]interface{}{
+					"name":     toolUseId, // Use tool_use_id as function name reference
+					"response": response,   // Structured object instead of plain string
+				},
+			}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (p *GeminiProvider) convertAnthropicToolsToGemini(tools []interface{}) ([]interface{}, error) {
+	var geminiTools []interface{}
+
+	functionDeclarations := make([]interface{}, 0)
+
+	for _, tool := range tools {
+		if toolMap, ok := tool.(map[string]interface{}); ok {
+			functionDecl := map[string]interface{}{
+				"name": toolMap["name"],
+			}
+
+			if description, ok := toolMap["description"]; ok {
+				functionDecl["description"] = description
+			}
+
+			if inputSchema, ok := toolMap["input_schema"]; ok {
+				functionDecl["parameters"] = inputSchema
+			}
+
+			functionDeclarations = append(functionDeclarations, functionDecl)
+		}
+	}
+
+	if len(functionDeclarations) > 0 {
+		geminiTool := map[string]interface{}{
+			"functionDeclarations": functionDeclarations,
+		}
+		geminiTools = append(geminiTools, geminiTool)
+	}
+
+	return geminiTools, nil
 }

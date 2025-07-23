@@ -10,7 +10,8 @@ import (
 type Provider interface {
 	Name() string
 	SupportsStreaming() bool
-	Transform(request []byte) ([]byte, error)
+	TransformRequest(request []byte) ([]byte, error)
+	TransformResponse(response []byte) ([]byte, error)
 	TransformStream(chunk []byte, state *StreamState) ([]byte, error)
 	IsStreaming(headers map[string][]string) bool
 	GetEndpoint() string
