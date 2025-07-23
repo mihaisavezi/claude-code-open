@@ -1,34 +1,67 @@
-# Claude Code Open
+<div align="center">
 
-A wrapper around Claude Code that actually allows you to connect it to any other LLM provider. Contribute to add providers
+# 🚀 Claude Code Open
 
-Production-ready LLM proxy server that converts requests from various LLM providers to Anthropic's Claude API format. Built with Go for high performance and reliability.
+*A universal LLM proxy that connects Claude Code to any language model provider*
 
-This project is inspired by [Clude Code Router](https://github.com/musistudio/claude-code-router), the project was buggy and didn't work for me. This fixes that.
+[![Go Version](https://img.shields.io/github/go-mod/go-version/Davincible/claude-code-open)](https://golang.org)
+[![License](https://img.shields.io/github/license/Davincible/claude-code-open)](LICENSE)
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 
-## Features
+**Production-ready LLM proxy server** that converts requests from various LLM providers to Anthropic's Claude API format. Built with Go for high performance and reliability.
 
-- **Multi-Provider Support**: Supports 5 major LLM providers:
-  - **OpenRouter**: Access to multiple models from different providers
-  - **OpenAI**: Direct access to GPT models (GPT-4, GPT-4-turbo, GPT-3.5, etc.)
-  - **Anthropic**: Direct access to Claude models (Claude-3.5-Sonnet, Claude-3-Opus, Claude-3-Haiku)
-  - **Nvidia**: Access to Nemotron models via Nvidia's LLM API (bit buggy still)
-  - **Google Gemini**: Access to Gemini models (Gemini-2.0-Flash, Gemini-1.5-Pro, etc.)
-- **Zero-Config Setup**: Run immediately with just `CCO_API_KEY` environment variable - no config file required
-- **YAML Configuration**: Modern YAML configuration with automatic defaults and model whitelists
-- **Dynamic Request Transformation**: Automatically converts requests from any supported provider format to Anthropic's Claude API format
-- **Dynamic Model Selection**: Support for explicit provider/model selection using comma notation (e.g., `openrouter,anthropic/claude-sonnet-4`)
-- **Model Whitelisting**: Filter available models per provider using pattern matching
-- **Default Model Management**: Automatically populated model lists with smart defaults for each provider
-- **API Key Protection**: Optional proxy-level authentication for added security
+---
 
-## Quick Start
+*Inspired by [Claude Code Router](https://github.com/musistudio/claude-code-router) but rebuilt from the ground up to actually work reliably.*
 
-> **Note**: When installed with `go install`, the binary is named `claude-code-open`. Throughout this documentation, you can substitute `cco` with `claude-code-open` or create an alias as shown in the installation section.
+</div>
 
-### Installation
+## ✨ Features
 
-#### Option 1: Install with Go (Recommended)
+<table>
+<tr>
+<td width="50%">
+
+### 🌐 Multi-Provider Support
+- **OpenRouter** - Multiple models from different providers
+- **OpenAI** - Direct GPT model access
+- **Anthropic** - Native Claude model support
+- **NVIDIA** - Nemotron models via API
+- **Google Gemini** - Gemini model family
+
+### ⚡ Zero-Config Setup
+- Run with just `CCO_API_KEY` environment variable
+- No configuration file required to get started
+- Smart defaults for all providers
+
+</td>
+<td width="50%">
+
+### 🔧 Advanced Configuration
+- **YAML Configuration** with automatic defaults
+- **Model Whitelisting** with pattern matching
+- **Dynamic Model Selection** using comma notation
+- **API Key Protection** for enhanced security
+
+### 🔄 Smart Request Handling
+- **Dynamic Request Transformation** between formats
+- **Automatic Provider Detection** and routing
+- **Streaming Support** for all providers
+
+</td>
+</tr>
+</table>
+
+## 🚀 Quick Start
+
+> **💡 Note**: When installed with `go install`, the binary is named `claude-code-open`. Throughout this documentation, you can substitute `cco` with `claude-code-open` or create an alias as shown in the installation section.
+
+### 📦 Installation
+
+<details>
+<summary><b>📥 Option 1: Install with Go (Recommended)</b></summary>
+
+<br>
 
 The easiest way to install is using Go's built-in installer:
 
@@ -52,7 +85,12 @@ sudo ln -s "$GOBIN_DIR/claude-code-open" /usr/local/bin/cco
 # sudo ln -s "$([ -n "$(go env GOBIN)" ] && go env GOBIN || echo "$(go env GOPATH)/bin")/claude-code-open" /usr/local/bin/cco
 ```
 
-#### Option 2: Build from Source
+</details>
+
+<details>
+<summary><b>🔨 Option 2: Build from Source</b></summary>
+
+<br>
 
 ```bash
 # Clone the repository
@@ -68,7 +106,12 @@ go build -o cco .
 sudo mv cco /usr/local/bin/
 ```
 
-#### Option 3: Install with Custom Binary Name
+</details>
+
+<details>
+<summary><b>⚙️ Option 3: Install with Custom Binary Name</b></summary>
+
+<br>
 
 ```bash
 # Install with go install and create symlink using Go environment
@@ -88,7 +131,11 @@ ln -sf ~/.local/bin/claude-code-open ~/.local/bin/cco
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```
 
-### Quick Start with CCO_API_KEY
+</details>
+
+---
+
+### 🔑 Quick Start with CCO_API_KEY
 
 For the fastest setup, you can run without any configuration file using just the `CCO_API_KEY` environment variable:
 
@@ -107,13 +154,21 @@ cco start  # or claude-code-open start
 # e.g., if you use "openai,gpt-4o" -> key goes to OpenAI
 ```
 
-**How CCO_API_KEY works:**
-- **Single API Key**: Use one API key environment variable for all providers
-- **Provider Detection**: The key is automatically sent to the correct provider based on your model selection
-- **No Config Required**: Run immediately without creating any configuration files, although config file is an option
-- **Fallback Priority**: Provider-specific keys in config files take precedence over CCO_API_KEY
+<div align="center">
+<table>
+<tr><th>🔑 How CCO_API_KEY Works</th></tr>
+<tr><td>
 
-### Full Configuration (Optional)
+✅ **Single API Key** - Use one environment variable for all providers  
+✅ **Provider Detection** - Key automatically routed to correct provider  
+✅ **No Config Required** - Run immediately without config files  
+✅ **Fallback Priority** - Provider-specific keys take precedence  
+
+</td></tr>
+</table>
+</div>
+
+### ⚙️ Full Configuration (Optional)
 
 For advanced setups with multiple API keys, generate a complete YAML configuration:
 
@@ -144,58 +199,92 @@ Alternatively, use the interactive setup:
 cco config init  # or claude-code-open config init
 ```
 
-### Usage
+### 🎯 Usage
 
-Start the router service:
+<table>
+<tr>
+<td width="50%">
 
+**🚀 Start the Service**
 ```bash
-cco start  # or claude-code-open start
+cco start
+# or
+claude-code-open start
 ```
 
-Use Claude Code with the router:
-
+**📊 Check Status**
 ```bash
-cco code [claude-code-arguments]  # or claude-code-open code [...]
-# You can also run this directly without starting the server first, it will auto start
+cco status
+# or
+claude-code-open status
 ```
 
-Check service status:
+</td>
+<td width="50%">
 
+**💬 Use with Claude Code**
 ```bash
-cco status  # or claude-code-open status
+cco code [arguments]
+# or
+claude-code-open code [...]
+# Auto-starts if not running
 ```
 
-Stop the service:
-
+**⏹️ Stop the Service**
 ```bash
-cco stop  # or claude-code-open stop
+cco stop
+# or
+claude-code-open stop
 ```
 
-## Dynamic Model Selection
+</td>
+</tr>
+</table>
+
+## 🔄 Dynamic Model Selection
 
 The router supports explicit provider and model selection using comma notation, which overrides all automatic routing logic:
 
-### Automatic Routing (Fallback)
+<div align="center">
+<table>
+<tr><th>🤖 Automatic Routing (Fallback)</th></tr>
+<tr><td>
 
 When no comma is present in the model name, the router applies these rules in order:
 
-1. **Long Context**: If tokens > 60,000 → use `LongContext` config
-2. **Background Tasks**: If model starts with "claude-3-5-haiku" → use `Background` config  
-3. **Default Routing**: Use `Think`, `WebSearch`, or model as-is
+1. **📄 Long Context** - If tokens > 60,000 → use `LongContext` config
+2. **⚡ Background Tasks** - If model starts with "claude-3-5-haiku" → use `Background` config  
+3. **🎯 Default Routing** - Use `Think`, `WebSearch`, or model as-is
 
-## Architecture
+</td></tr>
+</table>
+</div>
 
-### Core Components
+## 🏗️ Architecture
 
-- **`internal/config/`** - Configuration management
-- **`internal/providers/`** - Provider implementations and registry
-- **`internal/server/`** - HTTP server and routing
-- **`internal/handlers/`** - Request handlers (proxy, health)
-- **`internal/middleware/`** - HTTP middleware (auth, logging)
-- **`internal/process/`** - Process lifecycle management
-- **`cmd/`** - CLI command implementations
+### 🧩 Core Components
 
-### Provider System
+<table>
+<tr>
+<td width="50%">
+
+📁 **`internal/config/`** - Configuration management  
+🔌 **`internal/providers/`** - Provider implementations  
+🌐 **`internal/server/`** - HTTP server and routing  
+🎯 **`internal/handlers/`** - Request handlers (proxy, health)  
+
+</td>
+<td width="50%">
+
+🔧 **`internal/middleware/`** - HTTP middleware (auth, logging)  
+⚙️ **`internal/process/`** - Process lifecycle management  
+💻 **`cmd/`** - CLI command implementations  
+
+</td>
+</tr>
+</table>
+
+### 🔌 Provider System
 
 The router uses a modular provider system where each provider implements the `Provider` interface:
 
@@ -212,27 +301,58 @@ type Provider interface {
 }
 ```
 
-### Request Flow
+### 🔄 Request Flow
 
-1. Client sends request to router
-2. Router authenticates request (if API key configured)
-3. Router selects appropriate model based on routing configuration
-4. Router identifies provider based on configuration
-5. Provider transforms request from Claude format to provider format using `TransformRequest()`
-6. Router proxies request to upstream provider
-7. Provider transforms response from provider format back to Claude format using `TransformResponse()`
-8. Router streams response to client
+<div align="center">
 
-## Configuration
+```mermaid
+graph TD
+    A[📱 Client Request] --> B[🔐 Authentication]
+    B --> C[🎯 Model Selection]
+    C --> D[🔌 Provider Selection]
+    D --> E[🔄 Transform Request]
+    E --> F[🌐 Proxy to Provider]
+    F --> G[🔄 Transform Response]
+    G --> H[📡 Stream to Client]
+```
 
-### Configuration File Location
+</div>
 
-- Linux/macOS: `~/.claude-code-open/config.yaml` (preferred) or `config.json`
-- Windows: `%USERPROFILE%\.claude-code-open\config.yaml` (preferred) or `config.json`
+1. **📱 Client Request** - Client sends request to router
+2. **🔐 Authentication** - Router authenticates request (if API key configured)
+3. **🎯 Model Selection** - Router selects appropriate model based on routing
+4. **🔌 Provider Selection** - Router identifies provider based on configuration
+5. **🔄 Transform Request** - Provider transforms Claude format to provider format
+6. **🌐 Proxy to Provider** - Router proxies request to upstream provider
+7. **🔄 Transform Response** - Provider transforms response back to Claude format
+8. **📡 Stream to Client** - Router streams response to client
 
-**Backward Compatibility**: The router will also check `~/.claude-code-router/` for existing configurations and use them automatically, with a migration notice.
+## ⚙️ Configuration
 
-### YAML Configuration Format (Recommended)
+### 📁 Configuration File Location
+
+<table>
+<tr>
+<td width="50%">
+
+**🐧 Linux/macOS**
+- `~/.claude-code-open/config.yaml` *(preferred)*
+- `~/.claude-code-open/config.json`
+
+</td>
+<td width="50%">
+
+**🪟 Windows**  
+- `%USERPROFILE%\.claude-code-open\config.yaml` *(preferred)*
+- `%USERPROFILE%\.claude-code-open\config.json`
+
+</td>
+</tr>
+</table>
+
+> **🔄 Backward Compatibility**: The router will also check `~/.claude-code-router/` for existing configurations and use them automatically, with a migration notice.
+
+### 📄 YAML Configuration Format (Recommended)
 
 The router now supports modern YAML configuration with automatic defaults:
 
@@ -278,7 +398,12 @@ router:
   web_search: openrouter/perplexity/llama-3.1-sonar-huge-128k-online
 ```
 
-### Legacy JSON Format
+### 📜 Legacy JSON Format
+
+<details>
+<summary><b>📋 JSON Configuration (Click to expand)</b></summary>
+
+<br>
 
 The router still supports JSON configuration for backward compatibility:
 
@@ -307,71 +432,129 @@ The router still supports JSON configuration for backward compatibility:
 }
 ```
 
-### Configuration Features
+</details>
 
-- **Auto-Defaults**: URLs and model lists are automatically populated for all providers
-- **YAML Priority**: YAML configuration takes precedence over JSON if both exist
-- **Model Whitelisting**: Use `model_whitelist` to filter models by pattern (e.g., `["claude", "gpt-4"]`)
-- **Smart Model Management**: Default models are automatically filtered by whitelists
-- **Proxy Protection**: Optional `api_key` field protects the entire proxy with authentication
+### ⚙️ Configuration Features
 
-### Router Configuration
+<table>
+<tr>
+<td width="50%">
 
-- **`default`**: Default model to use when no specific model is requested
-- **`think`**: Model for complex reasoning tasks (e.g., o1-preview)
-- **`long_context`**: Model for requests with >60k tokens
-- **`background`**: Model for background/batch processing  
-- **`web_search`**: Model for web search enabled tasks
+✅ **Auto-Defaults** - URLs and model lists auto-populated  
+✅ **YAML Priority** - YAML takes precedence over JSON  
+✅ **Model Whitelisting** - Filter models by pattern  
 
-Model format: `provider_name/model_name` (e.g., `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`)
+</td>
+<td width="50%">
 
-## Commands
+✅ **Smart Model Management** - Auto-filtered by whitelists  
+✅ **Proxy Protection** - Optional API key authentication  
 
-### Service Management
+</td>
+</tr>
+</table>
 
+### 🗺️ Router Configuration
+
+<table>
+<tr>
+<td width="50%">
+
+🎯 **`default`** - Default model when none specified  
+🧠 **`think`** - Complex reasoning tasks (e.g., o1-preview)  
+📄 **`long_context`** - Requests with >60k tokens  
+
+</td>
+<td width="50%">
+
+⚡ **`background`** - Background/batch processing  
+🌐 **`web_search`** - Web search enabled tasks  
+
+</td>
+</tr>
+</table>
+
+> **Format**: `provider_name/model_name` (e.g., `openai/gpt-4o`, `anthropic/claude-3-5-sonnet`)
+
+## 💻 Commands
+
+### 🔧 Service Management
+
+<table>
+<tr>
+<td width="33%">
+
+**🚀 Start Service**
 ```bash
-# Start the router service
-cco start [--verbose] [--log-file]  # or claude-code-open start [...]
-
-# Stop the router service  
-cco stop  # or claude-code-open stop
-
-# Check service status
-cco status  # or claude-code-open status
+cco start [--verbose] [--log-file]
 ```
 
-### Configuration Management
+</td>
+<td width="33%">
 
+**📊 Check Status**
 ```bash
-# Generate example YAML configuration with all providers
-cco config generate  # or claude-code-open config generate
-
-# Generate and overwrite existing configuration
-cco config generate --force  # or claude-code-open config generate --force
-
-# Initialize configuration interactively
-cco config init  # or claude-code-open config init
-
-# Show current configuration (displays format: YAML/JSON)
-cco config show  # or claude-code-open config show
-
-# Validate configuration
-cco config validate  # or claude-code-open config validate
+cco status
 ```
 
-### Claude Code Integration
+</td>
+<td width="33%">
+
+**⏹️ Stop Service**
+```bash
+cco stop
+```
+
+</td>
+</tr>
+</table>
+
+### ⚙️ Configuration Management
+
+<table>
+<tr>
+<td width="50%">
+
+**📁 Generate Config**
+```bash
+cco config generate [--force]
+```
+
+**🔧 Interactive Setup**
+```bash
+cco config init
+```
+
+</td>
+<td width="50%">
+
+**👁️ Show Config**
+```bash
+cco config show
+```
+
+**✅ Validate Config**
+```bash
+cco config validate
+```
+
+</td>
+</tr>
+</table>
+
+### 💬 Claude Code Integration
 
 ```bash
 # Run Claude Code through the router
-cco code [args...]  # or claude-code-open code [args...]
+cco code [args...]
 
 # Examples:
-cco code --help  # or claude-code-open code --help
+cco code --help
 cco code "Write a Python script to sort a list"
 cco code --resume session-name
 ```
 
-## Adding New Providers
+## 🔌 Adding New Providers
 
 To add support for a new LLM provider:
 
@@ -419,14 +602,28 @@ To add support for a new LLM provider:
    }
    ```
 
-## Development
+## 🚧 Development
 
-### Prerequisites
+### 📋 Prerequisites
 
-- Go 1.24.4 or later
-- Access to LLM provider APIs (OpenRouter, OpenAI, etc.)
+<table>
+<tr>
+<td width="50%">
 
-### Development
+🐹 **Go 1.24.4** or later  
+🔑 **LLM Provider API Access** (OpenRouter, OpenAI, etc.)  
+
+</td>
+<td width="50%">
+
+💻 **Development Tools** (optional)  
+🔥 **Air** (hot reload - auto-installed)  
+
+</td>
+</tr>
+</table>
+
+### 🔥 Development with Hot Reload
 
 ```bash
 # Development with hot reload (automatically installs Air if needed)
@@ -439,57 +636,85 @@ make dev
 # - Automatically rebuild and restart on changes
 ```
 
-### Building
+### 🏗️ Building
 
+<table>
+<tr>
+<td width="50%">
+
+**🔨 Single Platform**
 ```bash
-# Build for current platform
 go build -o cco .
-
-# Or use Makefile
+# or
 make build
-
-# Or use Taskfile (modern alternative)
 task build
+```
 
-# Build for multiple platforms
-make build-all      # or
+**🌍 Cross-Platform**
+```bash
+make build-all
 task build-all
+```
 
-# Manual cross-compilation
+</td>
+<td width="50%">
+
+**🎯 Manual Cross-Compilation**
+```bash
 GOOS=linux GOARCH=amd64 go build -o cco-linux-amd64 .
 GOOS=darwin GOARCH=amd64 go build -o cco-darwin-amd64 .
 GOOS=windows GOARCH=amd64 go build -o cco-windows-amd64.exe .
 ```
 
-### Testing
+</td>
+</tr>
+</table>
 
+### 🧪 Testing
+
+<table>
+<tr>
+<td width="33%">
+
+**🔍 Basic Tests**
 ```bash
-# Run tests
 go test ./...
-
-# Or use task runners
-make test           # or
+make test
 task test
-
-# Run tests with coverage
-go test -cover ./...
-make coverage       # or  
-task test-coverage
-
-# Run specific provider tests
-go test ./internal/providers/...
-
-# Additional task commands
-task benchmark      # Run benchmarks
-task security       # Security audit with gosec
-task check          # Comprehensive checks (fmt, lint, test, security)
 ```
 
-### Task Runner
+</td>
+<td width="33%">
+
+**📊 Coverage**
+```bash
+go test -cover ./...
+make coverage
+task test-coverage
+```
+
+</td>
+<td width="33%">
+
+**🛡️ Security**
+```bash
+task security
+task benchmark  
+task check
+```
+
+</td>
+</tr>
+</table>
+
+### ⚡ Task Runner
 
 The project includes both a traditional `Makefile` and a modern `Taskfile.yml` for task automation. [Task](https://taskfile.dev/) provides more powerful features and better cross-platform support.
 
-**Available tasks:**
+<details>
+<summary><b>📋 Available Tasks (Click to expand)</b></summary>
+
+<br>
 ```bash
 # Core development tasks
 task build              # Build the binary
@@ -523,9 +748,11 @@ task install            # Install to system
 task release            # Create release build
 ```
 
-## Production Deployment
+</details>
 
-### Systemd Service (Linux)
+## 🚀 Production Deployment
+
+### 🐧 Systemd Service (Linux)
 
 Create `/etc/systemd/system/claude-code-open.service`:
 
@@ -556,27 +783,43 @@ sudo systemctl enable claude-code-open
 sudo systemctl start claude-code-open
 ```
 
-### Environment Variables
+### 🌐 Environment Variables
 
 The router respects these environment variables:
 
-- `CCO_API_KEY` - **Universal API key for all providers** (see Quick Start section)
-- `CCO_HOST` - Override host binding
-- `CCO_PORT` - Override port binding
-- `CCO_CONFIG_PATH` - Override config file path
-- `CCO_LOG_LEVEL` - Set log level (debug, info, warn, error)
+<table>
+<tr>
+<td width="50%">
 
-#### CCO_API_KEY Behavior
+🔑 **`CCO_API_KEY`** - Universal API key for all providers  
+🏠 **`CCO_HOST`** - Override host binding  
+🔌 **`CCO_PORT`** - Override port binding  
 
-The `CCO_API_KEY` environment variable provides a simple way to use a single API key across all providers:
+</td>
+<td width="50%">
 
-1. **No Config File**: If no configuration file exists and `CCO_API_KEY` is set, the router creates a minimal configuration with all providers
-2. **Config File Exists**: If a config file exists, `CCO_API_KEY` serves as a fallback for providers without specific API keys
-3. **Provider Selection**: The API key is sent to whichever provider you request:
-   - `openrouter,anthropic/claude-3.5-sonnet` → API key sent to OpenRouter
-   - `openai,gpt-4o` → API key sent to OpenAI  
-   - `anthropic,claude-3-haiku-20240307` → API key sent to Anthropic
-4. **Priority**: Provider-specific API keys in configuration files take precedence over `CCO_API_KEY`
+📁 **`CCO_CONFIG_PATH`** - Override config file path  
+📊 **`CCO_LOG_LEVEL`** - Set log level (debug, info, warn, error)  
+
+</td>
+</tr>
+</table>
+
+#### 🔑 CCO_API_KEY Behavior
+
+<div align="center">
+<table>
+<tr><th>🔑 How CCO_API_KEY Works</th></tr>
+<tr><td>
+
+1️⃣ **No Config File** - Creates minimal config with all providers  
+2️⃣ **Config File Exists** - Serves as fallback for missing provider keys  
+3️⃣ **Provider Selection** - Key sent to requested provider automatically  
+4️⃣ **Priority** - Provider-specific keys override CCO_API_KEY  
+
+</td></tr>
+</table>
+</div>
 
 ```bash
 # Use your OpenAI API key directly with OpenAI
@@ -587,91 +830,145 @@ cco start
 # - "openai,gpt-4o"
 ```
 
-## Monitoring
+## 📊 Monitoring
 
-### Health Check
+### 💓 Health Check
 
 ```bash
 curl http://localhost:6970/health
 ```
 
-### Logs
+### 📝 Logs & Metrics
 
-Logs include structured information about:
+<table>
+<tr>
+<td width="50%">
+
+**📋 Log Information**
 - Request routing and provider selection
-- Token usage (input/output)
+- Token usage (input/output)  
 - Response times and status codes
 - Error conditions and debugging info
 
-### Metrics
+</td>
+<td width="50%">
 
-The router provides basic operational metrics through logs:
+**📈 Operational Metrics**
 - Request count and response times
-- Token usage statistics
+- Token usage statistics  
 - Provider response status codes
 - Error rates by provider
 
-## Troubleshooting
+</td>
+</tr>
+</table>
 
-### Common Issues
+## 🔧 Troubleshooting
 
-**Service won't start:**
-- Check configuration with `cco config validate` (or `claude-code-open config validate`)
-- Ensure port is available with `netstat -ln | grep :6970`
-- Check logs with `cco start --verbose` (or `claude-code-open start --verbose`)
+### ⚠️ Common Issues
 
-**Authentication errors:**
-- Verify provider API keys in configuration
-- Check router API key if authentication is enabled
-- Ensure Claude Code environment variables are set correctly
+<table>
+<tr>
+<td width="50%">
 
-**Transformation errors:**
-- Enable verbose logging to see transformation details
+**🚫 Service Won't Start**
+- Check config: `cco config validate`
+- Check port: `netstat -ln | grep :6970`
+- Enable verbose: `cco start --verbose`
+
+**🔑 Authentication Errors**
+- Verify provider API keys in config
+- Check router API key if enabled
+- Ensure Claude Code env vars are set
+
+</td>
+<td width="50%">
+
+**⚙️ Transformation Errors**
+- Enable verbose logging for details
 - Check provider compatibility
-- Verify request format matches expected provider schema
+- Verify request format matches schema
 
-**Performance issues:**
+**🐌 Performance Issues**
 - Monitor token usage in logs
-- Consider using faster models for background tasks
+- Use faster models for background tasks
 - Check network latency to provider APIs
 
-### Debug Mode
+</td>
+</tr>
+</table>
+
+### 🐛 Debug Mode
 
 ```bash
-cco start --verbose  # or claude-code-open start --verbose
+cco start --verbose
 ```
 
-This enables detailed logging of:
-- Request/response transformations
-- Provider selection logic
-- Token counting details
-- HTTP request/response details
+<div align="center">
+<table>
+<tr><th>🔍 Debug Information</th></tr>
+<tr><td>
 
-## License
+✅ Request/response transformations  
+✅ Provider selection logic  
+✅ Token counting details  
+✅ HTTP request/response details  
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+</td></tr>
+</table>
+</div>
 
-## Changelog
+## 📜 License
 
-### v0.3.0
-- **New Providers**: Added Nvidia and Google Gemini support (5 total providers)
-- **YAML Configuration**: Modern YAML config with automatic defaults and smart model management
-- **Model Whitelisting**: Filter available models per provider using pattern matching
-- **API Key Protection**: Optional proxy-level authentication for enhanced security
-- **Enhanced CLI**: New `cco config generate` command creates complete YAML configuration
-- **Comprehensive Testing**: 100% test coverage for all providers including streaming and tool calls
-- **Default Model Management**: Auto-populated curated model lists for all providers
-- **Streaming Tool Calls**: Fixed complex streaming tool parameter issues across all providers
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
-### v0.2.0
-- Complete refactor with modular architecture
-- Support for multiple providers (OpenRouter, OpenAI, Anthropic)
-- Improved CLI interface
-- Production-ready error handling and logging
-- Configuration management system
-- Process lifecycle management
+## 📈 Changelog
 
-### v0.1.0
-- Initial proof-of-concept implementation
-- Basic OpenRouter support
-- Simple proxy functionality
+<details>
+<summary><b>🎯 v0.3.0 - Latest Release</b></summary>
+
+<br>
+
+✨ **New Providers** - Added Nvidia and Google Gemini support (5 total providers)  
+📄 **YAML Configuration** - Modern YAML config with automatic defaults  
+🔍 **Model Whitelisting** - Filter available models per provider using patterns  
+🔐 **API Key Protection** - Optional proxy-level authentication  
+💻 **Enhanced CLI** - New `cco config generate` command  
+🧪 **Comprehensive Testing** - 100% test coverage for all providers  
+📋 **Default Model Management** - Auto-populated curated model lists  
+🔄 **Streaming Tool Calls** - Fixed complex streaming parameter issues  
+
+</details>
+
+<details>
+<summary><b>⚡ v0.2.0 - Architecture Overhaul</b></summary>
+
+<br>
+
+🏗️ **Complete Refactor** - Modular architecture  
+🔌 **Multi-Provider Support** - OpenRouter, OpenAI, Anthropic  
+💻 **Improved CLI Interface** - Better user experience  
+🛡️ **Production-Ready** - Error handling and logging  
+⚙️ **Configuration Management** - Robust config system  
+🔄 **Process Lifecycle** - Proper service management  
+
+</details>
+
+<details>
+<summary><b>🌱 v0.1.0 - Initial Release</b></summary>
+
+<br>
+
+🎯 **Proof-of-Concept** - Initial implementation  
+🔌 **Basic OpenRouter** - Single provider support  
+🌐 **Simple Proxy** - Basic functionality  
+
+</details>
+
+---
+
+<div align="center">
+
+**Made with ❤️ for the Claude Code community**
+
+</div>
