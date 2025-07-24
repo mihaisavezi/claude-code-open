@@ -691,6 +691,7 @@ The project includes both a traditional `Makefile` and a modern `Taskfile.yml` f
 <summary><b>📋 Available Tasks (Click to expand)</b></summary>
 
 <br>
+
 ```bash
 # Core development tasks
 task build              # Build the binary
