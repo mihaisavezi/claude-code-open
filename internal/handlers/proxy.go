@@ -14,8 +14,8 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/pkoukk/tiktoken-go"
 
-	"github.com/Davincible/claude-code-open/internal/config"
-	"github.com/Davincible/claude-code-open/internal/providers"
+	"github.com/mihaisavezi/claude-code-open/internal/config"
+	"github.com/mihaisavezi/claude-code-open/internal/providers"
 )
 
 type ProxyHandler struct {

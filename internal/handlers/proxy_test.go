@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Davincible/claude-code-open/internal/config"
-	"github.com/Davincible/claude-code-open/internal/providers"
+	"github.com/mihaisavezi/claude-code-open/internal/config"
+	"github.com/mihaisavezi/claude-code-open/internal/providers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
