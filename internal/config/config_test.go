@@ -131,22 +131,23 @@ func TestConfig_DomainMappings(t *testing.T) {
 
     // Test YAML configuration with domain mappings
     yamlConfig := `
-		host: 127.0.0.1
-		port: 6970
-		api_key: "test-proxy-key"
-		providers:
-		- name: "local-lmstudio"
-			url: "http://localhost:1234/v1/chat/completions"
-			api_key: "test-key"
-			
-		domain_mappings:
-		localhost: openai
-		127.0.0.1: gemini
-		0.0.0.0: openrouter
-		
-		router:
-		default: "local-lmstudio,qwen/qwen3-coder-30b"
-	`
+host: 127.0.0.1
+port: 6970
+api_key: "test-proxy-key"
+providers:
+  - name: "local-lmstudio"
+    url: "http://localhost:1234/v1/chat/completions"
+    api_key: "test-key"
+    default_models:
+        - qwen/qwen3-coder-30b
+    
+domain_mappings:
+  localhost: openai
+  127.0.0.1: gemini
+  0.0.0.0: openrouter
+  
+router:
+  default: "local-lmstudio,qwen/qwen3-coder-30b"`
 
     yamlPath := filepath.Join(tempDir, DefaultYAMLFilename)
     err := os.WriteFile(yamlPath, []byte(yamlConfig), 0644)

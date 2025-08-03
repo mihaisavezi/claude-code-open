@@ -341,10 +341,6 @@ func runConfigGenerate(cmd *cobra.Command, _ []string) error {
     return nil
 }
 
-
-	return nil
-}
-
 func maskString(s string) string {
 	if s == "" {
 		return "(not set)"
