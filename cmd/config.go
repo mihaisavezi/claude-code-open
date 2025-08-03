@@ -10,7 +10,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/Davincible/claude-code-open/internal/config"
+	"github.com/mihaisavezi/claude-code-open/internal/config"
 )
 
 var configCmd = &cobra.Command{

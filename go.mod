@@ -1,4 +1,4 @@
-module github.com/Davincible/claude-code-open
+module github.com/mihaisavezi/claude-code-open
 
 go 1.24.4
 

@@ -4,7 +4,7 @@ vars:
   BINARY_NAME: cco
   VERSION: 0.3.0
   BUILD_DIR: build
-  MODULE_PATH: github.com/Davincible/claude-code-open
+  MODULE_PATH: github.com/mihaisavezi/claude-code-open
 
 env:
   CGO_ENABLED: 0
