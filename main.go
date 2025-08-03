@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/mihaisavezi/claude-code-open/cmd"
+	"github.com/Davincible/claude-code-open/cmd"
 )
 
 func main() {

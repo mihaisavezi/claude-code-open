@@ -11,9 +11,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mihaisavezi/claude-code-open/internal/config"
-	"github.com/mihaisavezi/claude-code-open/internal/handlers"
-	"github.com/mihaisavezi/claude-code-open/internal/providers"
+	"github.com/Davincible/claude-code-open/internal/config"
+	"github.com/Davincible/claude-code-open/internal/handlers"
+	"github.com/Davincible/claude-code-open/internal/providers"
 )
 
 func TestProxyIntegration(t *testing.T) {

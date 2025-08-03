@@ -69,7 +69,7 @@ The easiest way to install is using Go's built-in installer:
 
 ```bash
 # Install directly from GitHub
-go install github.com/mihaisavezi/claude-code-open@latest
+go install github.com/Davincible/claude-code-open@latest
 
 # The binary will be installed as 'claude-code-open' in $(go env GOBIN) or $(go env GOPATH)/bin
 # Create an alias for shorter command (optional)
@@ -96,7 +96,7 @@ sudo ln -s "$GOBIN_DIR/claude-code-open" /usr/local/bin/cco
 
 ```bash
 # Clone the repository
-git clone https://github.com/mihaisavezi/claude-code-open
+git clone https://github.com/Davincible/claude-code-open
 cd claude-code-open
 
 # Build with Make (creates 'cco' binary)
@@ -117,17 +117,17 @@ sudo mv cco /usr/local/bin/
 
 ```bash
 # Install with go install and create symlink using Go environment
-go install github.com/mihaisavezi/claude-code-open@latest
+go install github.com/Davincible/claude-code-open@latest
 GOBIN_DIR=$(go env GOBIN); [ -z "$GOBIN_DIR" ] && GOBIN_DIR="$(go env GOPATH)/bin"
 sudo ln -sf "$GOBIN_DIR/claude-code-open" /usr/local/bin/cco
 
 # Or use go install with custom GOBIN (if you have write permissions)
-GOBIN=/usr/local/bin go install github.com/mihaisavezi/claude-code-open@latest
+GOBIN=/usr/local/bin go install github.com/Davincible/claude-code-open@latest
 sudo mv /usr/local/bin/claude-code-open /usr/local/bin/cco
 
 # Or install to a custom directory you own
 mkdir -p ~/.local/bin
-GOBIN=~/.local/bin go install github.com/mihaisavezi/claude-code-open@latest
+GOBIN=~/.local/bin go install github.com/Davincible/claude-code-open@latest
 ln -sf ~/.local/bin/claude-code-open ~/.local/bin/cco
 # Add ~/.local/bin to PATH if not already there
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc

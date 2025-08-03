@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/mihaisavezi/claude-code-open/internal/config"
+	"github.com/Davincible/claude-code-open/internal/config"
 )
 
 type AuthMiddleware struct {

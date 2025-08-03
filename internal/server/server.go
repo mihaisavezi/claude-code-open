@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mihaisavezi/claude-code-open/internal/config"
-	"github.com/mihaisavezi/claude-code-open/internal/handlers"
-	"github.com/mihaisavezi/claude-code-open/internal/middleware"
-	"github.com/mihaisavezi/claude-code-open/internal/providers"
+	"github.com/Davincible/claude-code-open/internal/config"
+	"github.com/Davincible/claude-code-open/internal/handlers"
+	"github.com/Davincible/claude-code-open/internal/middleware"
+	"github.com/Davincible/claude-code-open/internal/providers"
 )
 
 type Server struct {
@@ -35,7 +35,7 @@ func New(configManager *config.Manager, logger *slog.Logger) *Server {
     
     // Apply domain mappings from config
     cfg := configManager.Get()
-    if cfg.DomainMappings != nil {
+    if cfg != nil && cfg.DomainMappings != nil {
         registry.SetDomainMappings(cfg.DomainMappings)
     }
     

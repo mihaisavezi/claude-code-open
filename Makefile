@@ -16,7 +16,7 @@ GOMOD=$(GOCMD) mod
 GOFMT=gofmt
 
 # Build flags
-BUILD_FLAGS=-ldflags="-s -w -X 'github.com/mihaisavezi/claude-code-open/cmd.Version=$(VERSION)'"
+BUILD_FLAGS=-ldflags="-s -w -X 'github.com/Davincible/claude-code-open/cmd.Version=$(VERSION)'"
 
 .PHONY: all build clean test coverage fmt lint help install uninstall build-all
 
