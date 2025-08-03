@@ -82,6 +82,7 @@ type Config struct {
 	APIKey    string       `json:"APIKEY,omitempty" yaml:"api_key,omitempty"`
 	Providers []Provider   `json:"Providers" yaml:"providers"`
 	Router    RouterConfig `json:"Router" yaml:"router,omitempty"`
+	DomainMappings map[string]string      `json:"domain_mappings,omitempty" yaml:"domain_mappings,omitempty"`
 }
 
 type Manager struct {
